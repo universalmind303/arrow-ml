@@ -9,8 +9,8 @@ use arrow::tensor::Tensor;
 use arrow_kernels_common::BackendRegistry;
 use arrow_kernels_common::KernelError;
 use arrow_kernels_common::Result;
-use num_traits::Zero;
-use std::ops::{AddAssign, Mul};
+use num_traits::{One, Zero};
+use std::ops::{Add, AddAssign, Mul};
 
 /// Casts a Tensor's buffer to a typed slice.
 pub(crate) fn tensor_as_slice<'a, T: ArrowPrimitiveType>(
@@ -95,7 +95,7 @@ fn matvec_f32(a: &[f32], x: &[f32], m: usize, n: usize) -> Vec<f32> {
 // Private f64 implementation
 // ---------------------------------------------------------------------------
 
-fn naive_matmul_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
+fn naive_gemm_64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     let mut c = vec![0.0f64; m * n];
     for i in 0..m {
         for p in 0..k {
@@ -108,7 +108,7 @@ fn naive_matmul_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f
     c
 }
 
-fn matmul_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
+fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     // Try GPU backend for large matrices
     if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
         let registry = BackendRegistry::global();
@@ -121,11 +121,11 @@ fn matmul_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     if m >= SIMD_THRESHOLD || n >= SIMD_THRESHOLD || k >= SIMD_THRESHOLD {
         kernel_f64::gemm(a, b, m, k, n)
     } else {
-        naive_matmul_f64(a, b, m, k, n)
+        naive_gemm_64(a, b, m, k, n)
     }
 }
 
-fn matvec_f64(a: &[f64], x: &[f64], m: usize, n: usize) -> Vec<f64> {
+fn gemv_f64(a: &[f64], x: &[f64], m: usize, n: usize) -> Vec<f64> {
     let mut result = vec![0.0f64; m];
     for i in 0..m {
         let mut sum = 0.0f64;
@@ -141,7 +141,7 @@ fn matvec_f64(a: &[f64], x: &[f64], m: usize, n: usize) -> Vec<f64> {
 // Generic naive implementations (all other numeric types)
 // ---------------------------------------------------------------------------
 
-fn naive_matmul_generic<N>(a: &[N], b: &[N], m: usize, k: usize, n: usize) -> Vec<N>
+fn naive_gemm_generic<N>(a: &[N], b: &[N], m: usize, k: usize, n: usize) -> Vec<N>
 where
     N: Zero + Copy + Mul<Output = N> + AddAssign,
 {
@@ -157,7 +157,7 @@ where
     c
 }
 
-fn naive_matvec_generic<N>(a: &[N], x: &[N], m: usize, n: usize) -> Vec<N>
+fn naive_gemv_generic<N>(a: &[N], x: &[N], m: usize, n: usize) -> Vec<N>
 where
     N: Zero + Copy + Mul<Output = N> + AddAssign,
 {
@@ -175,6 +175,26 @@ where
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// Applies α/β scaling in-place: out[i] = alpha * out[i] + beta * existing[i].
+/// No-op when alpha == 1 and existing is None (the common matmul/matvec case).
+fn apply_alpha_beta<N: One + Copy + Mul<Output = N> + Add<Output = N> + PartialEq>(
+    out: &mut [N],
+    alpha: N,
+    beta: N,
+    existing: Option<&[N]>,
+) {
+    if alpha == N::one() && existing.is_none() {
+        return;
+    }
+    for i in 0..out.len() {
+        let mut val = alpha * out[i];
+        if let Some(c_data) = existing {
+            val = val + beta * c_data[i];
+        }
+        out[i] = val;
+    }
+}
 
 /// Validates matmul shapes and returns (m, k, n).
 fn validate_matmul_shapes<T: ArrowPrimitiveType>(
@@ -211,72 +231,142 @@ fn buf_to_tensor_1d<T: ArrowPrimitiveType>(buf: Buffer, len: usize) -> Result<Te
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Matrix multiplication: C = A * B.
+/// General matrix multiplication: C = α * A * B + β * C.
 ///
 /// A must be (m x k), B must be (k x n). Both must be 2D row-major tensors.
+/// If `c` is provided, it must be (m x n) and is scaled by `beta` then accumulated into.
+/// If `c` is `None`, `beta` is ignored and the result is just α * A * B.
+///
 /// Returns a row-major (m x n) tensor.
 ///
-/// Supports `Float32` and `Float64` data types. Uses a tiled + packed + SIMD
-/// micro-kernel for large matrices, falls back to a naive loop for small ones.
-pub fn matmul<T: ArrowPrimitiveType>(
+/// Uses optimized SIMD/GPU paths for f32/f64, naive fallback for other types.
+pub fn gemm<T: ArrowPrimitiveType>(
+    alpha: T::Native,
     a: &Tensor<'_, T>,
     b: &Tensor<'_, T>,
+    beta: T::Native,
+    c: Option<&Tensor<'_, T>>,
 ) -> Result<Tensor<'static, T>>
 where
-    T::Native: Zero + Copy + Mul<Output = T::Native> + AddAssign,
+    T::Native: Zero + One + Copy + Mul<Output = T::Native> + Add<Output = T::Native> + AddAssign,
 {
     let (m, k, n) = validate_matmul_shapes(a, b)?;
 
+    if let Some(c_tensor) = c {
+        let (cm, cn) = shape_2d(c_tensor, "gemm")?;
+        if cm != m || cn != n {
+            return Err(KernelError::ShapeMismatch {
+                operation: "gemm",
+                expected: format!("C shape ({m}, {n})"),
+                actual: format!("({cm}, {cn})"),
+            });
+        }
+    }
+
+    // Compute A*B, then apply alpha/beta scaling.
+    // Each arm uses concrete types to avoid associated-type unification issues.
     let result_buf = match T::DATA_TYPE {
         DataType::Float32 => {
-            let result = matmul_f32(a.data().typed_data(), b.data().typed_data(), m, k, n);
-            Buffer::from_vec(result)
+            let mut ab = matmul_f32(a.data().typed_data(), b.data().typed_data(), m, k, n);
+            let c_f32: Option<&[f32]> = c.map(|t| t.data().typed_data());
+            // SAFETY: T::DATA_TYPE == Float32 guarantees T::Native == f32
+            let alpha_f32: f32 = unsafe { *(&alpha as *const T::Native as *const f32) };
+            let beta_f32: f32 = unsafe { *(&beta as *const T::Native as *const f32) };
+            apply_alpha_beta(&mut ab, alpha_f32, beta_f32, c_f32);
+            Buffer::from_vec(ab)
         }
         DataType::Float64 => {
-            let result = matmul_f64(a.data().typed_data(), b.data().typed_data(), m, k, n);
-            Buffer::from_vec(result)
+            let mut ab = gemm_f64(a.data().typed_data(), b.data().typed_data(), m, k, n);
+            let c_f64: Option<&[f64]> = c.map(|t| t.data().typed_data());
+            let alpha_f64: f64 = unsafe { *(&alpha as *const T::Native as *const f64) };
+            let beta_f64: f64 = unsafe { *(&beta as *const T::Native as *const f64) };
+            apply_alpha_beta(&mut ab, alpha_f64, beta_f64, c_f64);
+            Buffer::from_vec(ab)
         }
         _ => {
-            let a_slice: &[T::Native] = a.data().typed_data();
-            let b_slice: &[T::Native] = b.data().typed_data();
-            let result = naive_matmul_generic(a_slice, b_slice, m, k, n);
-            Buffer::from_vec(result)
+            let mut ab: Vec<T::Native> = naive_gemm_generic(
+                a.data().typed_data(),
+                b.data().typed_data(),
+                m,
+                k,
+                n,
+            );
+            let c_slice: Option<&[T::Native]> = c.map(|t| t.data().typed_data());
+            apply_alpha_beta(&mut ab, alpha, beta, c_slice);
+            Buffer::from_vec(ab)
         }
     };
 
     buf_to_tensor_2d::<T>(result_buf, m, n)
 }
 
-/// Matrix-vector multiplication: y = A * x.
+/// Matrix multiplication: C = A * B.
 ///
-/// A must be (m x n), x must be a 1D tensor of length n.
-/// Returns a 1D tensor of length m.
+/// Convenience wrapper around [`gemm`] with α=1, β=0.
 ///
-/// Supports `Float32` and `Float64` data types.
-pub fn matvec<T: ArrowPrimitiveType>(
+/// A must be (m x k), B must be (k x n). Both must be 2D row-major tensors.
+/// Returns a row-major (m x n) tensor.
+pub fn matmul<T: ArrowPrimitiveType>(
     a: &Tensor<'_, T>,
-    x: &Tensor<'_, T>,
+    b: &Tensor<'_, T>,
 ) -> Result<Tensor<'static, T>>
 where
-    T::Native: Zero + Copy + Mul<Output = T::Native> + AddAssign,
+    T::Native: Zero + One + Copy + Mul<Output = T::Native> + Add<Output = T::Native> + AddAssign,
 {
-    let (m, n) = shape_2d(a, "matvec")?;
+    gemm(T::Native::one(), a, b, T::Native::zero(), None)
+}
+
+/// General matrix-vector multiplication: y = α * A * x + β * y.
+///
+/// A must be (m x n), x must be a 1D tensor of length n.
+/// If `y` is provided, it must be 1D of length m and is scaled by `beta` then accumulated into.
+/// If `y` is `None`, `beta` is ignored and the result is just α * A * x.
+///
+/// Returns a 1D tensor of length m.
+pub fn gemv<T: ArrowPrimitiveType>(
+    alpha: T::Native,
+    a: &Tensor<'_, T>,
+    x: &Tensor<'_, T>,
+    beta: T::Native,
+    y: Option<&Tensor<'_, T>>,
+) -> Result<Tensor<'static, T>>
+where
+    T::Native: Zero + One + Copy + Mul<Output = T::Native> + Add<Output = T::Native> + AddAssign,
+{
+    let (m, n) = shape_2d(a, "gemv")?;
 
     let x_shape = x
         .shape()
-        .ok_or_else(|| KernelError::InvalidArgument("matvec: vector has no shape".to_string()))?;
+        .ok_or_else(|| KernelError::InvalidArgument("gemv: vector has no shape".to_string()))?;
     if x_shape.len() != 1 {
         return Err(KernelError::InvalidArgument(format!(
-            "matvec: expected 1D vector, got {}D",
+            "gemv: expected 1D vector, got {}D",
             x_shape.len()
         )));
     }
     if x_shape[0] != n {
         return Err(KernelError::ShapeMismatch {
-            operation: "matvec",
+            operation: "gemv",
             expected: format!("vector length {n}"),
             actual: format!("length {}", x_shape[0]),
         });
+    }
+
+    if let Some(y_tensor) = y {
+        let y_shape = y_tensor.shape().ok_or_else(|| {
+            KernelError::InvalidArgument("gemv: y vector has no shape".to_string())
+        })?;
+        if y_shape.len() != 1 || y_shape[0] != m {
+            return Err(KernelError::ShapeMismatch {
+                operation: "gemv",
+                expected: format!("y length {m}"),
+                actual: format!(
+                    "{}D length {}",
+                    y_shape.len(),
+                    y_shape.first().unwrap_or(&0)
+                ),
+            });
+        }
     }
 
     let a_buf = a.data();
@@ -284,20 +374,47 @@ where
 
     let result_buf = match T::DATA_TYPE {
         DataType::Float32 => {
-            let result = matvec_f32(a_buf.typed_data(), x_buf.typed_data(), m, n);
-            Buffer::from_vec(result)
+            let mut ax = matvec_f32(a_buf.typed_data(), x_buf.typed_data(), m, n);
+            let y_f32: Option<&[f32]> = y.map(|t| t.data().typed_data());
+            let alpha_f32: f32 = unsafe { *(&alpha as *const T::Native as *const f32) };
+            let beta_f32: f32 = unsafe { *(&beta as *const T::Native as *const f32) };
+            apply_alpha_beta(&mut ax, alpha_f32, beta_f32, y_f32);
+            Buffer::from_vec(ax)
         }
         DataType::Float64 => {
-            let result = matvec_f64(a_buf.typed_data(), x_buf.typed_data(), m, n);
-            Buffer::from_vec(result)
+            let mut ax = gemv_f64(a_buf.typed_data(), x_buf.typed_data(), m, n);
+            let y_f64: Option<&[f64]> = y.map(|t| t.data().typed_data());
+            let alpha_f64: f64 = unsafe { *(&alpha as *const T::Native as *const f64) };
+            let beta_f64: f64 = unsafe { *(&beta as *const T::Native as *const f64) };
+            apply_alpha_beta(&mut ax, alpha_f64, beta_f64, y_f64);
+            Buffer::from_vec(ax)
         }
         _ => {
-            let result = naive_matvec_generic::<T::Native>(a_buf.typed_data(), x_buf.typed_data(), m, n);
-            Buffer::from_vec(result)
+            let mut ax: Vec<T::Native> =
+                naive_gemv_generic(a_buf.typed_data(), x_buf.typed_data(), m, n);
+            let y_slice: Option<&[T::Native]> = y.map(|t| t.data().typed_data());
+            apply_alpha_beta(&mut ax, alpha, beta, y_slice);
+            Buffer::from_vec(ax)
         }
     };
 
     buf_to_tensor_1d::<T>(result_buf, m)
+}
+
+/// Matrix-vector multiplication: y = A * x.
+///
+/// Convenience wrapper around [`gemv`] with α=1, β=0.
+///
+/// A must be (m x n), x must be a 1D tensor of length n.
+/// Returns a 1D tensor of length m.
+pub fn matvec<T: ArrowPrimitiveType>(
+    a: &Tensor<'_, T>,
+    x: &Tensor<'_, T>,
+) -> Result<Tensor<'static, T>>
+where
+    T::Native: Zero + One + Copy + Mul<Output = T::Native> + Add<Output = T::Native> + AddAssign,
+{
+    gemv(T::Native::one(), a, x, T::Native::zero(), None)
 }
 
 #[cfg(test)]
@@ -567,5 +684,99 @@ mod tests {
         assert_eq!(y.shape().unwrap(), &vec![2]);
         let data: &[i32] = y.data().typed_data();
         assert_eq!(data, &[6, 15]);
+    }
+
+    // ---- gemm tests ----
+
+    #[test]
+    fn test_gemm_alpha_only() {
+        // C = 2.0 * A * B (no existing C)
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = make_f32_2d(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0], 3, 2);
+        let c = gemm(2.0f32, &a, &b, 0.0, None).unwrap();
+
+        let data = c.data().typed_data::<f32>();
+        // AB = [58, 64, 139, 154], scaled by 2
+        assert!((data[0] - 116.0).abs() < 1e-4);
+        assert!((data[1] - 128.0).abs() < 1e-4);
+        assert!((data[2] - 278.0).abs() < 1e-4);
+        assert!((data[3] - 308.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_gemm_alpha_beta() {
+        // C = 1.0 * A * B + 0.5 * C_existing
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b = make_f32_2d(vec![5.0, 6.0, 7.0, 8.0], 2, 2);
+        let c_existing = make_f32_2d(vec![100.0, 200.0, 300.0, 400.0], 2, 2);
+
+        // AB = [1*5+2*7, 1*6+2*8, 3*5+4*7, 3*6+4*8] = [19, 22, 43, 50]
+        // result = 1.0 * AB + 0.5 * C = [19+50, 22+100, 43+150, 50+200]
+        //        = [69, 122, 193, 250]
+        let c = gemm(1.0f32, &a, &b, 0.5, Some(&c_existing)).unwrap();
+        let data = c.data().typed_data::<f32>();
+        assert!((data[0] - 69.0).abs() < 1e-4);
+        assert!((data[1] - 122.0).abs() < 1e-4);
+        assert!((data[2] - 193.0).abs() < 1e-4);
+        assert!((data[3] - 250.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_gemm_identity_is_matmul() {
+        // gemm with α=1, β=0, no C should match matmul
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let b = make_f32_2d(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0], 3, 2);
+        let c_gemm = gemm(1.0f32, &a, &b, 0.0, None).unwrap();
+        let c_matmul = matmul(&a, &b).unwrap();
+
+        let d1 = c_gemm.data().typed_data::<f32>();
+        let d2 = c_matmul.data().typed_data::<f32>();
+        for i in 0..4 {
+            assert!((d1[i] - d2[i]).abs() < 1e-6);
+        }
+    }
+
+    // ---- gemv tests ----
+
+    #[test]
+    fn test_gemv_alpha_only() {
+        // y = 3.0 * A * x
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let x = make_f32_1d(vec![1.0, 1.0, 1.0]);
+        let y = gemv(3.0f32, &a, &x, 0.0, None).unwrap();
+
+        // Ax = [6, 15], scaled by 3 = [18, 45]
+        let data: &[f32] = y.data().typed_data();
+        assert!((data[0] - 18.0).abs() < 1e-5);
+        assert!((data[1] - 45.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_gemv_alpha_beta() {
+        // y = 2.0 * A * x + 0.5 * y_existing
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let x = make_f32_1d(vec![1.0, 1.0, 1.0]);
+        let y_existing = make_tensor_1d::<Float32Type>(vec![100.0, 200.0]);
+
+        // Ax = [6, 15]
+        // result = 2*[6,15] + 0.5*[100,200] = [12+50, 30+100] = [62, 130]
+        let y = gemv(2.0f32, &a, &x, 0.5, Some(&y_existing)).unwrap();
+        let data: &[f32] = y.data().typed_data();
+        assert!((data[0] - 62.0).abs() < 1e-5);
+        assert!((data[1] - 130.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_gemv_identity_is_matvec() {
+        let a = make_f32_2d(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
+        let x = make_f32_1d(vec![1.0, 1.0, 1.0]);
+        let y_gemv = gemv(1.0f32, &a, &x, 0.0, None).unwrap();
+        let y_matvec = matvec(&a, &x).unwrap();
+
+        let d1: &[f32] = y_gemv.data().typed_data();
+        let d2: &[f32] = y_matvec.data().typed_data();
+        for i in 0..2 {
+            assert!((d1[i] - d2[i]).abs() < 1e-6);
+        }
     }
 }
