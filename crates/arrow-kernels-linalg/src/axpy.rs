@@ -10,7 +10,11 @@ use std::ops::{Add, Mul};
 /// and contain no null values.
 ///
 /// Returns a new array containing the result.
-pub fn axpy<T>(alpha: T::Native, x: &PrimitiveArray<T>, y: &PrimitiveArray<T>) -> Result<PrimitiveArray<T>>
+pub fn axpy<T>(
+    alpha: T::Native,
+    x: &PrimitiveArray<T>,
+    y: &PrimitiveArray<T>,
+) -> Result<PrimitiveArray<T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Zero + Copy + Mul<Output = T::Native> + Add<Output = T::Native>,

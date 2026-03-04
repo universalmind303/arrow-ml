@@ -9,10 +9,7 @@ use arrow_kernels_common::{KernelError, Result};
 /// - Dimensions are compared from the right
 /// - A dimension of size 1 can be broadcast to any size
 /// - Missing dimensions on the left are treated as 1
-pub fn expand<T>(
-    input: &Tensor<'_, T>,
-    target_shape: &[usize],
-) -> Result<Tensor<'static, T>>
+pub fn expand<T>(input: &Tensor<'_, T>, target_shape: &[usize]) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,

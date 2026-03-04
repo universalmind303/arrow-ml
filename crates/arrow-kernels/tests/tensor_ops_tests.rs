@@ -2,8 +2,8 @@ use arrow::array::Float32Array;
 use arrow::buffer::Buffer;
 use arrow::datatypes::Float32Type;
 use arrow::tensor::Tensor;
-use arrow_kernels::tensor_ops::TensorOps;
 use arrow_kernels::array_ops::ArrayOps;
+use arrow_kernels::tensor_ops::TensorOps;
 
 fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
     Tensor::new_row_major(Buffer::from(data), Some(shape), None).unwrap()
@@ -95,8 +95,14 @@ fn test_pow() {
 #[test]
 fn test_floor_ceil_round() {
     let a = make_f32(vec![1.3, 2.7, -0.5], vec![3]);
-    assert_eq!(a.floor().unwrap().data().typed_data::<f32>(), &[1.0, 2.0, -1.0]);
-    assert_eq!(a.ceil().unwrap().data().typed_data::<f32>(), &[2.0, 3.0, 0.0]);
+    assert_eq!(
+        a.floor().unwrap().data().typed_data::<f32>(),
+        &[1.0, 2.0, -1.0]
+    );
+    assert_eq!(
+        a.ceil().unwrap().data().typed_data::<f32>(),
+        &[2.0, 3.0, 0.0]
+    );
 }
 
 #[test]

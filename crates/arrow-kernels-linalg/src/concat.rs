@@ -29,9 +29,9 @@ where
     }
 
     for (i, t) in tensors.iter().enumerate().skip(1) {
-        let s = t
-            .shape()
-            .ok_or_else(|| KernelError::InvalidArgument(format!("concat: tensor {i} has no shape")))?;
+        let s = t.shape().ok_or_else(|| {
+            KernelError::InvalidArgument(format!("concat: tensor {i} has no shape"))
+        })?;
         if s.len() != ndim {
             return Err(KernelError::ShapeMismatch {
                 operation: "concat",
@@ -130,7 +130,8 @@ where
         let mut offset = 0;
         for part in results.iter_mut() {
             let chunk = part.2 * inner_size;
-            part.1.extend_from_slice(&data[row_start + offset..row_start + offset + chunk]);
+            part.1
+                .extend_from_slice(&data[row_start + offset..row_start + offset + chunk]);
             offset += chunk;
         }
     }
@@ -161,7 +162,10 @@ mod tests {
         let b = make_f32(vec![7.0, 8.0, 9.0], vec![1, 3]);
         let c = concat(&[&a, &b], 0).unwrap();
         assert_eq!(c.shape().unwrap(), &vec![3, 3]);
-        assert_eq!(c.data().typed_data::<f32>(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+        assert_eq!(
+            c.data().typed_data::<f32>(),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        );
     }
 
     #[test]
@@ -170,18 +174,27 @@ mod tests {
         let b = make_f32(vec![5.0, 6.0, 7.0, 8.0, 9.0, 10.0], vec![2, 3]);
         let c = concat(&[&a, &b], 1).unwrap();
         assert_eq!(c.shape().unwrap(), &vec![2, 5]);
-        assert_eq!(c.data().typed_data::<f32>(), &[1.0, 2.0, 5.0, 6.0, 7.0, 3.0, 4.0, 8.0, 9.0, 10.0]);
+        assert_eq!(
+            c.data().typed_data::<f32>(),
+            &[1.0, 2.0, 5.0, 6.0, 7.0, 3.0, 4.0, 8.0, 9.0, 10.0]
+        );
     }
 
     #[test]
     fn test_split_and_reconcat() {
-        let orig = make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], vec![3, 3]);
+        let orig = make_f32(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            vec![3, 3],
+        );
         let parts = split(&orig, &[2, 1], 0).unwrap();
         assert_eq!(parts[0].shape().unwrap(), &vec![2, 3]);
         assert_eq!(parts[1].shape().unwrap(), &vec![1, 3]);
         let refs: Vec<&Tensor<'_, Float32Type>> = parts.iter().collect();
         let recon = concat(&refs, 0).unwrap();
-        assert_eq!(orig.data().typed_data::<f32>(), recon.data().typed_data::<f32>());
+        assert_eq!(
+            orig.data().typed_data::<f32>(),
+            recon.data().typed_data::<f32>()
+        );
     }
 
     #[test]

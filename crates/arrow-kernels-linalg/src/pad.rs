@@ -90,14 +90,20 @@ mod tests {
         let input = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
         let result = pad::<Float32Type>(&input, &[2, 2], 0.0).unwrap();
         assert_eq!(result.shape().unwrap(), &[7]);
-        assert_eq!(result.data().typed_data::<f32>(), &[0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0]);
+        assert_eq!(
+            result.data().typed_data::<f32>(),
+            &[0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0]
+        );
     }
 
     #[test]
     fn test_pad_1d_asymmetric() {
         let input = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
         let result = pad::<Float32Type>(&input, &[1, 3], 0.0).unwrap();
-        assert_eq!(result.data().typed_data::<f32>(), &[0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            result.data().typed_data::<f32>(),
+            &[0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0]
+        );
     }
 
     #[test]

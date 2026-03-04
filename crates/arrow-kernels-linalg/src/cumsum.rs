@@ -4,10 +4,7 @@ use arrow::tensor::Tensor;
 use arrow_kernels_common::{KernelError, Result};
 use num_traits::Float;
 
-pub fn cumsum<T>(
-    input: &Tensor<'_, T>,
-    axis: i64,
-) -> Result<Tensor<'static, T>>
+pub fn cumsum<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Float,

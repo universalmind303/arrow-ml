@@ -5,10 +5,7 @@ use arrow_kernels_common::{KernelError, Result};
 use num_traits::Float;
 
 /// Raise each element to a scalar exponent.
-pub fn pow<T>(
-    input: &Tensor<'_, T>,
-    exponent: T::Native,
-) -> Result<Tensor<'static, T>>
+pub fn pow<T>(input: &Tensor<'_, T>, exponent: T::Native) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Float,
@@ -24,25 +21,18 @@ where
 }
 
 /// Element-wise power: a[i] ^ b[i]. Tensors must have the same shape.
-pub fn pow_tensor<T>(
-    a: &Tensor<'_, T>,
-    b: &Tensor<'_, T>,
-) -> Result<Tensor<'static, T>>
+pub fn pow_tensor<T>(a: &Tensor<'_, T>, b: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
     let shape_a = a
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("pow_tensor: tensor a has no shape".into())
-        })?
+        .ok_or_else(|| KernelError::InvalidArgument("pow_tensor: tensor a has no shape".into()))?
         .to_vec();
     let shape_b = b
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("pow_tensor: tensor b has no shape".into())
-        })?;
+        .ok_or_else(|| KernelError::InvalidArgument("pow_tensor: tensor b has no shape".into()))?;
     if shape_a != *shape_b {
         return Err(KernelError::ShapeMismatch {
             operation: "pow_tensor",
@@ -104,9 +94,7 @@ where
 {
     let shape = input
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("reciprocal: tensor has no shape".into())
-        })?
+        .ok_or_else(|| KernelError::InvalidArgument("reciprocal: tensor has no shape".into()))?
         .to_vec();
     let data: &[T::Native] = input.data().typed_data();
     let out: Vec<T::Native> = data.iter().map(|&v| v.recip()).collect();
@@ -221,11 +209,7 @@ mod tests {
     #[test]
     fn test_sin_op() {
         let input = make_f32(
-            vec![
-                0.0,
-                std::f32::consts::FRAC_PI_2,
-                std::f32::consts::PI,
-            ],
+            vec![0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI],
             vec![3],
         );
         let out = sin_op::<Float32Type>(&input).unwrap();

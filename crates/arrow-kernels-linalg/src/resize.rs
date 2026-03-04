@@ -26,11 +26,9 @@ where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
-    let shape = input
-        .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("resize_nearest: tensor has no shape".into())
-        })?;
+    let shape = input.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("resize_nearest: tensor has no shape".into())
+    })?;
     if shape.len() != 4 {
         return Err(KernelError::InvalidArgument(format!(
             "resize_nearest: expected 4D NCHW tensor, got {}D",
@@ -48,10 +46,8 @@ where
     let data: &[T::Native] = input.data().typed_data();
     let mut out = Vec::with_capacity(n * c * output_h * output_w);
 
-    let scale_h: T::Native =
-        from_usize::<T::Native>(in_h) / from_usize::<T::Native>(output_h);
-    let scale_w: T::Native =
-        from_usize::<T::Native>(in_w) / from_usize::<T::Native>(output_w);
+    let scale_h: T::Native = from_usize::<T::Native>(in_h) / from_usize::<T::Native>(output_h);
+    let scale_w: T::Native = from_usize::<T::Native>(in_w) / from_usize::<T::Native>(output_w);
 
     for batch in 0..n {
         for ch in 0..c {
@@ -84,11 +80,9 @@ where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
-    let shape = input
-        .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("resize_bilinear: tensor has no shape".into())
-        })?;
+    let shape = input.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("resize_bilinear: tensor has no shape".into())
+    })?;
     if shape.len() != 4 {
         return Err(KernelError::InvalidArgument(format!(
             "resize_bilinear: expected 4D NCHW tensor, got {}D",
@@ -106,10 +100,8 @@ where
     let data: &[T::Native] = input.data().typed_data();
     let mut out = Vec::with_capacity(n * c * output_h * output_w);
 
-    let scale_h: T::Native =
-        from_usize::<T::Native>(in_h) / from_usize::<T::Native>(output_h);
-    let scale_w: T::Native =
-        from_usize::<T::Native>(in_w) / from_usize::<T::Native>(output_w);
+    let scale_h: T::Native = from_usize::<T::Native>(in_h) / from_usize::<T::Native>(output_h);
+    let scale_w: T::Native = from_usize::<T::Native>(in_w) / from_usize::<T::Native>(output_w);
     let one = <T::Native as One>::one();
 
     for batch in 0..n {

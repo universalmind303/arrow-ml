@@ -15,7 +15,9 @@ where
     T::Native: Float,
 {
     reduce_impl(input, axes, keepdims, "reduce_sum", |vals| {
-        vals.iter().copied().fold(<T::Native as Zero>::zero(), |a, b| a + b)
+        vals.iter()
+            .copied()
+            .fold(<T::Native as Zero>::zero(), |a, b| a + b)
     })
 }
 
@@ -30,7 +32,10 @@ where
     T::Native: Float,
 {
     reduce_impl(input, axes, keepdims, "reduce_mean", |vals| {
-        let sum = vals.iter().copied().fold(<T::Native as Zero>::zero(), |a, b| a + b);
+        let sum = vals
+            .iter()
+            .copied()
+            .fold(<T::Native as Zero>::zero(), |a, b| a + b);
         let n = <T::Native as num_traits::NumCast>::from(vals.len()).unwrap();
         sum / n
     })
@@ -270,12 +275,17 @@ mod tests {
     fn test_reduce_3d() {
         // 2x2x3 tensor, reduce axis 1
         let input = make_f32(
-            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+            vec![
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+            ],
             vec![2, 2, 3],
         );
         let out = reduce_sum(&input, &[1], false).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![2, 3]);
-        assert_eq!(out.data().typed_data::<f32>(), &[5.0, 7.0, 9.0, 17.0, 19.0, 21.0]);
+        assert_eq!(
+            out.data().typed_data::<f32>(),
+            &[5.0, 7.0, 9.0, 17.0, 19.0, 21.0]
+        );
     }
 
     #[test]

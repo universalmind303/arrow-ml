@@ -167,10 +167,8 @@ where
 
                                 for oc_local in 0..oc_per_group {
                                     let oc = g * oc_per_group + oc_local;
-                                    let w_idx = ic * w_stride_ic
-                                        + oc_local * w_stride_oc
-                                        + kh * k_w
-                                        + kw;
+                                    let w_idx =
+                                        ic * w_stride_ic + oc_local * w_stride_oc + kh * k_w + kw;
                                     let out_idx = n * out_channels * out_h * out_w
                                         + oc * out_h * out_w
                                         + oh * out_w
@@ -208,7 +206,14 @@ mod tests {
         let input = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
         let weight = make_f32(vec![1.0], vec![1, 1, 1, 1]);
         let out = conv_transpose2d::<Float32Type>(
-            &input, &weight, None, [0, 0], [0, 0], [1, 1], [1, 1], 1,
+            &input,
+            &weight,
+            None,
+            [0, 0],
+            [0, 0],
+            [1, 1],
+            [1, 1],
+            1,
         )
         .unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 2, 2]);
@@ -222,7 +227,14 @@ mod tests {
         let input = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
         let weight = make_f32(vec![1.0], vec![1, 1, 1, 1]);
         let out = conv_transpose2d::<Float32Type>(
-            &input, &weight, None, [0, 0], [0, 0], [2, 2], [1, 1], 1,
+            &input,
+            &weight,
+            None,
+            [0, 0],
+            [0, 0],
+            [2, 2],
+            [1, 1],
+            1,
         )
         .unwrap();
         // out_h = (2-1)*2 + 1*(1-1) + 0 + 1 - 0 = 3
@@ -271,7 +283,14 @@ mod tests {
             vec![1, 1, 3, 3],
         );
         let out = conv_transpose2d::<Float32Type>(
-            &input, &weight, None, [0, 0], [0, 0], [2, 2], [1, 1], 1,
+            &input,
+            &weight,
+            None,
+            [0, 0],
+            [0, 0],
+            [2, 2],
+            [1, 1],
+            1,
         )
         .unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 3, 3]);
@@ -287,7 +306,14 @@ mod tests {
         let input = make_f32(vec![0.0; 4], vec![1, 1, 2, 2]);
         let weight = make_f32(vec![0.0; 9], vec![1, 1, 3, 3]);
         let out = conv_transpose2d::<Float32Type>(
-            &input, &weight, None, [1, 1], [0, 0], [2, 2], [1, 1], 1,
+            &input,
+            &weight,
+            None,
+            [1, 1],
+            [0, 0],
+            [2, 2],
+            [1, 1],
+            1,
         )
         .unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 3, 3]);

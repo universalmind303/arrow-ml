@@ -14,7 +14,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-arrow = "57"
+arrow = {version = "57.1.0", default-features = false}
 num-traits = "0.2"
 rayon = "1.10"
 metal = "0.31"

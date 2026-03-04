@@ -12,16 +12,6 @@ use arrow_kernels_common::Result;
 use num_traits::{One, Zero};
 use std::ops::{Add, AddAssign, Mul};
 
-/// Casts a Tensor's buffer to a typed slice.
-pub(crate) fn tensor_as_slice<'a, T: ArrowPrimitiveType>(
-    tensor: &'a Tensor<'_, T>,
-) -> &'a [T::Native] {
-    let buf = tensor.data();
-    let ptr = buf.as_ptr() as *const T::Native;
-    let len = buf.len() / std::mem::size_of::<T::Native>();
-    unsafe { std::slice::from_raw_parts(ptr, len) }
-}
-
 /// Extracts 2D shape (rows, cols) from a Tensor, returning an error if not 2D.
 fn shape_2d<T: ArrowPrimitiveType>(
     tensor: &Tensor<'_, T>,
@@ -284,13 +274,8 @@ where
             Buffer::from_vec(ab)
         }
         _ => {
-            let mut ab: Vec<T::Native> = naive_gemm_generic(
-                a.data().typed_data(),
-                b.data().typed_data(),
-                m,
-                k,
-                n,
-            );
+            let mut ab: Vec<T::Native> =
+                naive_gemm_generic(a.data().typed_data(), b.data().typed_data(), m, k, n);
             let c_slice: Option<&[T::Native]> = c.map(|t| t.data().typed_data());
             apply_alpha_beta(&mut ab, alpha, beta, c_slice);
             Buffer::from_vec(ab)
@@ -613,7 +598,7 @@ mod tests {
         let y = matvec(&a, &x).unwrap();
 
         assert_eq!(y.shape().unwrap(), &vec![2]);
-        let data = tensor_as_slice(&y);
+        let data = y.data().typed_data::<f32>();
         assert!((data[0] - 6.0).abs() < 1e-5);
         assert!((data[1] - 15.0).abs() < 1e-5);
     }
@@ -641,8 +626,8 @@ mod tests {
         // [1 2 3] * [7  8 ]   [58  64 ]
         // [4 5 6]   [9  10] = [139 154]
         //            [11 12]
-        let a = make_tensor_2d::<Int32Type>(vec![1, 2, 3, 4, 5, 6], 2, 3);
-        let b = make_tensor_2d::<Int32Type>(vec![7, 8, 9, 10, 11, 12], 3, 2);
+        let a = make_tensor_2d::<Int32Type>(vec![1i32, 2, 3, 4, 5, 6], 2, 3);
+        let b = make_tensor_2d::<Int32Type>(vec![7i32, 8, 9, 10, 11, 12], 3, 2);
         let c = matmul(&a, &b).unwrap();
 
         assert_eq!(c.shape().unwrap(), &vec![2, 2]);

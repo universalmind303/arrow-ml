@@ -88,7 +88,13 @@ mod tests {
     use arrow::buffer::ScalarBuffer;
     use arrow::datatypes::Float32Type;
 
-    fn make_f32_4d(data: Vec<f32>, n: usize, c: usize, h: usize, w: usize) -> Tensor<'static, Float32Type> {
+    fn make_f32_4d(
+        data: Vec<f32>,
+        n: usize,
+        c: usize,
+        h: usize,
+        w: usize,
+    ) -> Tensor<'static, Float32Type> {
         let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
         Tensor::new_row_major(buffer, Some(vec![n, c, h, w]), None).unwrap()
     }

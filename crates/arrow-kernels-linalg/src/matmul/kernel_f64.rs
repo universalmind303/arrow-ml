@@ -83,20 +83,11 @@ unsafe fn microkernel(
             for jv in 0..NR_VECS {
                 let dst = row_ptr.add(jv * SIMD_WIDTH);
                 if first {
-                    std::ptr::copy_nonoverlapping(
-                        acc[i][jv].as_array().as_ptr(),
-                        dst,
-                        SIMD_WIDTH,
-                    );
+                    std::ptr::copy_nonoverlapping(acc[i][jv].as_array().as_ptr(), dst, SIMD_WIDTH);
                 } else {
-                    let existing =
-                        Simd::<f64, 2>::from_array(*(dst as *const [f64; 2]));
+                    let existing = Simd::<f64, 2>::from_array(*(dst as *const [f64; 2]));
                     let result = existing + acc[i][jv];
-                    std::ptr::copy_nonoverlapping(
-                        result.as_array().as_ptr(),
-                        dst,
-                        SIMD_WIDTH,
-                    );
+                    std::ptr::copy_nonoverlapping(result.as_array().as_ptr(), dst, SIMD_WIDTH);
                 }
             }
         }

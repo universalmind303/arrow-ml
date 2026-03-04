@@ -21,9 +21,7 @@ where
 {
     let shape = input
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("instance_norm: tensor has no shape".into())
-        })?;
+        .ok_or_else(|| KernelError::InvalidArgument("instance_norm: tensor has no shape".into()))?;
     if shape.len() != 4 {
         return Err(KernelError::InvalidArgument(format!(
             "instance_norm: expected 4D tensor (NCHW), got {}D",

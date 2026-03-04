@@ -70,18 +70,16 @@ impl Backend {
         let lib = unsafe { libloading::Library::new(path) }.ok()?;
 
         // Mandatory symbols
-        let name_fn: AkBackendNameFn = unsafe {
-            *lib.get::<AkBackendNameFn>(b"ak_backend_name\0").ok()?
-        };
+        let name_fn: AkBackendNameFn =
+            unsafe { *lib.get::<AkBackendNameFn>(b"ak_backend_name\0").ok()? };
         let priority_fn: AkBackendPriorityFn = unsafe {
-            *lib.get::<AkBackendPriorityFn>(b"ak_backend_priority\0").ok()?
+            *lib.get::<AkBackendPriorityFn>(b"ak_backend_priority\0")
+                .ok()?
         };
 
         let name = unsafe {
             let ptr = name_fn();
-            std::ffi::CStr::from_ptr(ptr)
-                .to_string_lossy()
-                .into_owned()
+            std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
         };
         let priority = unsafe { priority_fn() };
 

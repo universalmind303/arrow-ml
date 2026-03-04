@@ -34,13 +34,19 @@ where
 }
 
 /// Create a 1D tensor with values from start to limit (exclusive) with step delta.
-pub fn range_op<T>(start: T::Native, limit: T::Native, delta: T::Native) -> Result<Tensor<'static, T>>
+pub fn range_op<T>(
+    start: T::Native,
+    limit: T::Native,
+    delta: T::Native,
+) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
     if delta == T::Native::zero() {
-        return Err(KernelError::InvalidArgument("range_op: delta cannot be zero".into()));
+        return Err(KernelError::InvalidArgument(
+            "range_op: delta cannot be zero".into(),
+        ));
     }
     let mut out = Vec::new();
     let mut val = start;
@@ -61,10 +67,7 @@ where
 }
 
 /// Repeat a tensor along each axis by the given number of times.
-pub fn tile<T>(
-    input: &Tensor<'_, T>,
-    repeats: &[usize],
-) -> Result<Tensor<'static, T>>
+pub fn tile<T>(input: &Tensor<'_, T>, repeats: &[usize]) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,
@@ -82,7 +85,11 @@ where
         });
     }
 
-    let out_shape: Vec<usize> = in_shape.iter().zip(repeats.iter()).map(|(&d, &r)| d * r).collect();
+    let out_shape: Vec<usize> = in_shape
+        .iter()
+        .zip(repeats.iter())
+        .map(|(&d, &r)| d * r)
+        .collect();
     let total: usize = out_shape.iter().product();
     let data: &[T::Native] = input.data().typed_data();
 

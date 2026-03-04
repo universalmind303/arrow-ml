@@ -312,7 +312,10 @@ mod tests {
         for row_idx in 0..6 {
             let row_start = row_idx * 4;
             let row_sum: f32 = out_data[row_start..row_start + 4].iter().sum();
-            assert!(row_sum.abs() < 1e-4, "Row {row_idx} mean should be ~0, got {row_sum}");
+            assert!(
+                row_sum.abs() < 1e-4,
+                "Row {row_idx} mean should be ~0, got {row_sum}"
+            );
         }
     }
 }

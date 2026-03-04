@@ -50,17 +50,14 @@ where
     // --- Extract and validate weight shape (OC, IC/groups, kH, kW) ---
     let w_shape = weight
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("conv2d: weight tensor has no shape".into())
-        })?;
+        .ok_or_else(|| KernelError::InvalidArgument("conv2d: weight tensor has no shape".into()))?;
     if w_shape.len() != 4 {
         return Err(KernelError::InvalidArgument(format!(
             "conv2d: expected 4D weight, got {}D",
             w_shape.len()
         )));
     }
-    let (out_channels, ic_per_group, k_h, k_w) =
-        (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
+    let (out_channels, ic_per_group, k_h, k_w) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
 
     // --- Validate groups ---
     if groups == 0 {
@@ -200,10 +197,8 @@ where
                                             + in_c * in_stride_c
                                             + ih_orig * in_w
                                             + iw_orig;
-                                        let w_idx = oc * w_stride_oc
-                                            + ic * w_stride_ic
-                                            + kh * k_w
-                                            + kw;
+                                        let w_idx =
+                                            oc * w_stride_oc + ic * w_stride_ic + kh * k_w + kw;
 
                                         acc = acc + in_data[in_idx] * w_data[w_idx];
                                     }
@@ -211,8 +206,7 @@ where
                             }
                         }
 
-                        let out_idx =
-                            n * out_stride_n + oc * out_stride_c + oh * out_w + ow;
+                        let out_idx = n * out_stride_n + oc * out_stride_c + oh * out_w + ow;
                         out[out_idx] = acc;
                     }
                 }
@@ -336,8 +330,7 @@ mod tests {
         );
         let weight = make_f32_tensor(vec![1.0; 9], vec![1, 1, 3, 3]);
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [1, 1], [1, 1], [1, 1], 1).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [1, 1], [1, 1], [1, 1], 1).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 3, 3]);
 
         let data = out.data().typed_data::<f32>();
@@ -368,8 +361,7 @@ mod tests {
         );
         let weight = make_f32_tensor(vec![1.0], vec![1, 1, 1, 1]);
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [0, 0], [2, 2], [1, 1], 1).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [0, 0], [2, 2], [1, 1], 1).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 2, 2]);
         let data = out.data().typed_data::<f32>();
         // Picks (0,0)=1, (0,2)=3, (2,0)=9, (2,2)=11
@@ -386,8 +378,7 @@ mod tests {
         let input = make_f32_tensor(vec![1.0; 25], vec![1, 1, 5, 5]);
         let weight = make_f32_tensor(vec![1.0; 9], vec![1, 1, 3, 3]);
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [0, 0], [2, 2], [1, 1], 1).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [0, 0], [2, 2], [1, 1], 1).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 2, 2]);
         let data = out.data().typed_data::<f32>();
         for v in data {
@@ -410,8 +401,7 @@ mod tests {
         let bias = Float32Array::from(vec![10.0]);
 
         let out =
-            conv2d::<Float32Type>(&input, &weight, Some(&bias), [0, 0], [1, 1], [1, 1], 1)
-                .unwrap();
+            conv2d::<Float32Type>(&input, &weight, Some(&bias), [0, 0], [1, 1], [1, 1], 1).unwrap();
         let data = out.data().typed_data::<f32>();
         assert_eq!(data, &[11.0, 12.0, 13.0, 14.0]);
     }
@@ -427,8 +417,7 @@ mod tests {
         let bias = Float32Array::from(vec![0.5, -0.5]);
 
         let out =
-            conv2d::<Float32Type>(&input, &weight, Some(&bias), [0, 0], [1, 1], [1, 1], 1)
-                .unwrap();
+            conv2d::<Float32Type>(&input, &weight, Some(&bias), [0, 0], [1, 1], [1, 1], 1).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 2, 2, 2]);
         let data = out.data().typed_data::<f32>();
         // OC 0: input * 1.0 + 0.5 = [1.5, 2.5, 3.5, 4.5]
@@ -469,8 +458,7 @@ mod tests {
         // Weight: (out_channels=2, ic_per_group=1, kH=1, kW=1)
         let weight = make_f32_tensor(vec![1.0, 3.0], vec![2, 1, 1, 1]);
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [0, 0], [1, 1], [1, 1], 2).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [0, 0], [1, 1], [1, 1], 2).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 2, 3, 3]);
         let data = out.data().typed_data::<f32>();
 
@@ -522,8 +510,7 @@ mod tests {
             vec![2, 1, 3, 3],
         );
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [1, 1], [1, 1], [1, 1], 2).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [1, 1], [1, 1], [1, 1], 2).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 2, 4, 4]);
         let data = out.data().typed_data::<f32>();
 
@@ -536,8 +523,7 @@ mod tests {
         // data[16..32] should match input channel 1
         let ch1_start = 16;
         let expected_ch1 = [
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
-            16.0,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
         ];
         for i in 0..16 {
             assert!(
@@ -592,8 +578,7 @@ mod tests {
         );
         let weight = make_f32_tensor(vec![1.0; 9], vec![1, 1, 3, 3]);
 
-        let out =
-            conv2d::<Float32Type>(&input, &weight, None, [0, 0], [1, 1], [2, 2], 1).unwrap();
+        let out = conv2d::<Float32Type>(&input, &weight, None, [0, 0], [1, 1], [2, 2], 1).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 1, 1]);
         let data = out.data().typed_data::<f32>();
         // Dilated kernel hits positions (0,0),(0,2),(0,4),(2,0),(2,2),(2,4),(4,0),(4,2),(4,4)
@@ -612,8 +597,7 @@ mod tests {
         let input = make_f32_tensor(
             vec![
                 // Channel 0
-                1.0, 2.0, 3.0, 4.0,
-                // Channel 1
+                1.0, 2.0, 3.0, 4.0, // Channel 1
                 10.0, 20.0, 30.0, 40.0,
             ],
             vec![1, 2, 2, 2],
@@ -649,15 +633,8 @@ mod tests {
         let input = make_f32_tensor(vec![1.0; 4], vec![1, 1, 2, 2]);
         let weight = make_f32_tensor(vec![1.0], vec![1, 1, 1, 1]);
         let bad_bias = Float32Array::from(vec![1.0, 2.0]); // length 2, but out_channels=1
-        let result = conv2d::<Float32Type>(
-            &input,
-            &weight,
-            Some(&bad_bias),
-            [0, 0],
-            [1, 1],
-            [1, 1],
-            1,
-        );
+        let result =
+            conv2d::<Float32Type>(&input, &weight, Some(&bad_bias), [0, 0], [1, 1], [1, 1], 1);
         assert!(result.is_err());
     }
 

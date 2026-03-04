@@ -26,13 +26,7 @@ where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
-    array.unary(|x| {
-        if x > T::Native::zero() {
-            x
-        } else {
-            alpha * x
-        }
-    })
+    array.unary(|x| if x > T::Native::zero() { x } else { alpha * x })
 }
 
 #[cfg(test)]

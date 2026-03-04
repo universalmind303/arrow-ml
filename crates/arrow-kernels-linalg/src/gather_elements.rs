@@ -16,16 +16,12 @@ where
     T: ArrowPrimitiveType,
     T::Native: Copy,
 {
-    let in_shape = input
-        .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("gather_elements: input has no shape".into())
-        })?;
-    let idx_shape = indices
-        .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("gather_elements: indices has no shape".into())
-        })?;
+    let in_shape = input.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("gather_elements: input has no shape".into())
+    })?;
+    let idx_shape = indices.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("gather_elements: indices has no shape".into())
+    })?;
     let ndim = in_shape.len();
 
     if idx_shape.len() != ndim {

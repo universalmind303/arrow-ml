@@ -120,11 +120,7 @@ where
     let ndim = shape.len();
 
     // Resolve negative axis
-    let axis_resolved = if axis < 0 {
-        ndim as i64 + axis
-    } else {
-        axis
-    };
+    let axis_resolved = if axis < 0 { ndim as i64 + axis } else { axis };
     if axis_resolved < 0 || axis_resolved >= ndim as i64 {
         return Err(KernelError::InvalidArgument(format!(
             "{op}: axis {axis} out of range for {ndim}D tensor"
@@ -137,7 +133,9 @@ where
     let inner_size: usize = shape[axis_usize + 1..].iter().product();
 
     if dim_size == 0 {
-        return Err(KernelError::EmptyArray { operation: "argreduce_tensor" });
+        return Err(KernelError::EmptyArray {
+            operation: "argreduce_tensor",
+        });
     }
 
     let data: &[T::Native] = input.data().typed_data();

@@ -57,17 +57,14 @@ where
 /// over them using the max-subtraction trick, and writes them back.
 ///
 /// Supports negative axis values (e.g., -1 means last axis).
-pub fn softmax_tensor<T>(
-    input: &Tensor<'_, T>,
-    axis: i64,
-) -> Result<Tensor<'static, T>>
+pub fn softmax_tensor<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Float + AddAssign,
 {
-    let shape = input
-        .shape()
-        .ok_or_else(|| KernelError::InvalidArgument("softmax_tensor: tensor has no shape".into()))?;
+    let shape = input.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("softmax_tensor: tensor has no shape".into())
+    })?;
     let ndim = shape.len();
     if ndim == 0 {
         return Err(KernelError::InvalidArgument(

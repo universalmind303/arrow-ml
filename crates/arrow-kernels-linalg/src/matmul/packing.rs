@@ -95,8 +95,7 @@ pub fn pack_b<T: Copy + Default>(
                 for j in 0..nr {
                     if j < nr_actual {
                         unsafe {
-                            *packed.get_unchecked_mut(offset) =
-                                *b.get_unchecked(row_start + j);
+                            *packed.get_unchecked_mut(offset) = *b.get_unchecked(row_start + j);
                         }
                     } else {
                         unsafe {

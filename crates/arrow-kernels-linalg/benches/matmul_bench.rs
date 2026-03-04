@@ -5,13 +5,17 @@ use arrow_kernels_linalg::matmul::matmul;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn make_f32_tensor(rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
-    let data: Vec<f32> = (0..rows * cols).map(|i| ((i % 100) as f32) * 0.01).collect();
+    let data: Vec<f32> = (0..rows * cols)
+        .map(|i| ((i % 100) as f32) * 0.01)
+        .collect();
     let buffer = Buffer::from(data);
     Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
 }
 
 fn make_f64_tensor(rows: usize, cols: usize) -> Tensor<'static, Float64Type> {
-    let data: Vec<f64> = (0..rows * cols).map(|i| ((i % 100) as f64) * 0.01).collect();
+    let data: Vec<f64> = (0..rows * cols)
+        .map(|i| ((i % 100) as f64) * 0.01)
+        .collect();
     let buffer = Buffer::from(ScalarBuffer::<f64>::from(data).into_inner());
     Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
 }
@@ -36,8 +40,12 @@ fn bench_simd_vs_naive_f32(c: &mut Criterion) {
         let a_tensor = make_f32_tensor(size, size);
         let b_tensor = make_f32_tensor(size, size);
 
-        let a_data: Vec<f32> = (0..size * size).map(|i| ((i % 100) as f32) * 0.01).collect();
-        let b_data: Vec<f32> = (0..size * size).map(|i| ((i % 100) as f32) * 0.01).collect();
+        let a_data: Vec<f32> = (0..size * size)
+            .map(|i| ((i % 100) as f32) * 0.01)
+            .collect();
+        let b_data: Vec<f32> = (0..size * size)
+            .map(|i| ((i % 100) as f32) * 0.01)
+            .collect();
 
         group.bench_with_input(BenchmarkId::new("simd", size), &size, |bench, _| {
             bench.iter(|| matmul(&a_tensor, &b_tensor).unwrap())

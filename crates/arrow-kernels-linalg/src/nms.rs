@@ -153,10 +153,7 @@ mod tests {
 
     #[test]
     fn test_nms_score_threshold() {
-        let boxes = make_f32(
-            vec![0.0, 0.0, 1.0, 1.0, 10.0, 10.0, 11.0, 11.0],
-            vec![2, 4],
-        );
+        let boxes = make_f32(vec![0.0, 0.0, 1.0, 1.0, 10.0, 10.0, 11.0, 11.0], vec![2, 4]);
         let scores = make_f32(vec![0.9, 0.3], vec![2]);
         let result = non_max_suppression(&boxes, &scores, 10, 0.5, 0.5).unwrap();
         assert_eq!(result.len(), 1);

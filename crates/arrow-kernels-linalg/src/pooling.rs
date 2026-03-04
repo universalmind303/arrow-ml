@@ -152,8 +152,7 @@ where
     let out_w = pool_output_size(w, kw, sw, pw)?;
 
     let data: &[T::Native] = input.data().typed_data();
-    let pool_area: T::Native =
-        <T::Native as num_traits::NumCast>::from(kh * kw).unwrap();
+    let pool_area: T::Native = <T::Native as num_traits::NumCast>::from(kh * kw).unwrap();
     let mut out = Vec::with_capacity(n * c * out_h * out_w);
 
     for batch in 0..n {
@@ -547,7 +546,9 @@ mod tests {
         // 2 batches, 1 channel, 2x3
         // Batch 0: [1,5,3,2,4,6] -> max=6
         // Batch 1: [10,8,9,7,12,11] -> max=12
-        let data = vec![1.0, 5.0, 3.0, 2.0, 4.0, 6.0, 10.0, 8.0, 9.0, 7.0, 12.0, 11.0];
+        let data = vec![
+            1.0, 5.0, 3.0, 2.0, 4.0, 6.0, 10.0, 8.0, 9.0, 7.0, 12.0, 11.0,
+        ];
         let input = make_nchw(data, 2, 1, 2, 3);
         let out = global_max_pool::<Float32Type>(&input).unwrap();
 

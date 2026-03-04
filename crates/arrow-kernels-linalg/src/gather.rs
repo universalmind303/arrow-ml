@@ -100,14 +100,16 @@ where
     }
 
     // Resolve per-axis (start, end, step) for all dims
-    let mut dim_ranges: Vec<(i64, i64, i64)> = (0..ndim)
-        .map(|d| (0, shape[d] as i64, 1))
-        .collect();
+    let mut dim_ranges: Vec<(i64, i64, i64)> = (0..ndim).map(|d| (0, shape[d] as i64, 1)).collect();
 
     for i in 0..ax.len() {
         let a = {
             let v = ax[i];
-            if v < 0 { (ndim as i64 + v) as usize } else { v as usize }
+            if v < 0 {
+                (ndim as i64 + v) as usize
+            } else {
+                v as usize
+            }
         };
         if a >= ndim {
             return Err(KernelError::InvalidArgument(format!(
@@ -118,7 +120,9 @@ where
 
         let step = st[i];
         if step == 0 {
-            return Err(KernelError::InvalidArgument("slice: step cannot be 0".into()));
+            return Err(KernelError::InvalidArgument(
+                "slice: step cannot be 0".into(),
+            ));
         }
 
         let dim = shape[a] as i64;
@@ -128,13 +132,21 @@ where
 
         // Clamp to valid range
         if step > 0 {
-            if s < 0 { s += dim; }
-            if e < 0 { e += dim; }
+            if s < 0 {
+                s += dim;
+            }
+            if e < 0 {
+                e += dim;
+            }
             s = s.clamp(0, dim);
             e = e.clamp(0, dim);
         } else {
-            if s < 0 { s += dim; }
-            if e < 0 { e += dim; }
+            if s < 0 {
+                s += dim;
+            }
+            if e < 0 {
+                e += dim;
+            }
             s = s.clamp(-1, dim - 1);
             e = e.clamp(-1, dim - 1);
         }

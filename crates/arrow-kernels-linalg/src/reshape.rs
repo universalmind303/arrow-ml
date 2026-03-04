@@ -6,10 +6,7 @@ use arrow_kernels_common::{KernelError, Result};
 /// Reshape a tensor to a new shape. Supports one -1 dimension (inferred).
 ///
 /// Total elements must match. Data is copied with the new shape.
-pub fn reshape<T>(
-    input: &Tensor<'_, T>,
-    new_shape: &[i64],
-) -> Result<Tensor<'static, T>>
+pub fn reshape<T>(input: &Tensor<'_, T>, new_shape: &[i64]) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,
@@ -26,10 +23,7 @@ where
 ///
 /// E.g., shape [2, 3, 4] with axis=1 -> [2, 12].
 /// Supports negative axis indexing.
-pub fn flatten<T>(
-    input: &Tensor<'_, T>,
-    axis: i64,
-) -> Result<Tensor<'static, T>>
+pub fn flatten<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,
@@ -53,10 +47,7 @@ where
 ///
 /// If `axes` is None, removes all size-1 dims.
 /// If `axes` is Some, removes only specified axes (which must be size 1).
-pub fn squeeze<T>(
-    input: &Tensor<'_, T>,
-    axes: Option<&[i64]>,
-) -> Result<Tensor<'static, T>>
+pub fn squeeze<T>(input: &Tensor<'_, T>, axes: Option<&[i64]>) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,
@@ -105,10 +96,7 @@ where
 /// Insert dimensions of size 1 at the specified positions.
 ///
 /// Axes refer to positions in the *output* shape. Supports negative indexing.
-pub fn unsqueeze<T>(
-    input: &Tensor<'_, T>,
-    axes: &[i64],
-) -> Result<Tensor<'static, T>>
+pub fn unsqueeze<T>(input: &Tensor<'_, T>, axes: &[i64]) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy,
@@ -202,7 +190,10 @@ fn resolve_shape(new_shape: &[i64], total: usize) -> Result<Vec<usize>> {
             return Err(KernelError::ShapeMismatch {
                 operation: "reshape",
                 expected: format!("total elements {total} divisible by {product}"),
-                actual: format!("remainder {}", if product == 0 { total } else { total % product }),
+                actual: format!(
+                    "remainder {}",
+                    if product == 0 { total } else { total % product }
+                ),
             });
         }
         resolved[idx] = total / product;

@@ -8,7 +8,7 @@ use num_traits::{Float, Zero};
 /// Casts a Tensor's buffer to a typed slice.
 fn tensor_as_slice<'a, T: ArrowPrimitiveType>(tensor: &'a Tensor<'_, T>) -> &'a [T::Native] {
     let buf = tensor.data();
-    
+
     let ptr = buf.as_ptr() as *const T::Native;
     let len = buf.len() / std::mem::size_of::<T::Native>();
     unsafe { std::slice::from_raw_parts(ptr, len) }

@@ -260,11 +260,7 @@ pub fn metal_matmul_f32(
         &n_u32 as *const u32 as *const std::ffi::c_void,
     );
 
-    let groups = MTLSize::new(
-        (m as u64 + BM - 1) / BM,
-        (n as u64 + BN - 1) / BN,
-        1,
-    );
+    let groups = MTLSize::new((m as u64 + BM - 1) / BM, (n as u64 + BN - 1) / BN, 1);
     let threads_per_group = MTLSize::new(THREADS_X, THREADS_Y, 1);
 
     encoder.dispatch_thread_groups(groups, threads_per_group);
