@@ -9,3 +9,4 @@ arrow-kernels-common = { path = "../arrow-kernels-common" }
 arrow-kernels-linalg = { path = "../arrow-kernels-linalg" }
 arrow-kernels-activations = { path = "../arrow-kernels-activations" }
 arrow = { workspace = true }
+num-traits = { workspace = true }

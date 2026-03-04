@@ -206,6 +206,7 @@ dependencies = [
  "arrow-kernels-activations",
  "arrow-kernels-common",
  "arrow-kernels-linalg",
+ "num-traits",
 ]
 
 [[package]]
