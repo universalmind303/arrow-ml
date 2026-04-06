@@ -1,0 +1,18 @@
+[package]
+name = "arrow-ml"
+description = "Optimized tensor operations and machine learning primitives for Apache Arrow."
+keywords = ["arrow", "ml", "tensor", "machine-learning", "neural-network"]
+categories = ["science", "mathematics"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+arrow-ml-common = { path = "../arrow-ml-common", version = "0.1.0" }
+arrow-ml-linalg = { path = "../arrow-ml-linalg", version = "0.1.0" }
+arrow-ml-activations = { path = "../arrow-ml-activations", version = "0.1.0" }
+arrow = { workspace = true }
+num-traits = { workspace = true }

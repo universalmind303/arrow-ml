@@ -1,8 +1,8 @@
-# arrow-kernels
+# arrow-ml
 
 High-performance machine learning kernels built on [Apache Arrow](https://arrow.apache.org/), written in Rust.
 
-`arrow-kernels` provides optimized tensor operations, linear algebra primitives, and neural network building blocks that operate directly on Arrow's in-memory format. It features a tiered execution strategy — naive loops for small inputs, SIMD for medium workloads, and pluggable GPU backends for large computations.
+`arrow-ml` provides optimized tensor operations, linear algebra primitives, and neural network building blocks that operate directly on Arrow's in-memory format. It features a tiered execution strategy — naive loops for small inputs, SIMD for medium workloads, and pluggable GPU backends for large computations.
 
 ## Features
 
@@ -16,11 +16,11 @@ High-performance machine learning kernels built on [Apache Arrow](https://arrow.
 ## Crate Structure
 
 ```
-arrow-kernels              # Unified public API with TensorOps / ArrayOps traits
-├── arrow-kernels-linalg         # Linear algebra, reductions, reshaping, conv, pooling
-├── arrow-kernels-activations    # Activation functions (ReLU, GELU, Sigmoid, etc.)
-├── arrow-kernels-common         # Shared error types & backend plugin registry
-└── arrow-kernels-backend-metal  # Metal GPU backend (macOS, cdylib)
+arrow-ml              # Unified public API with TensorOps / ArrayOps traits
+├── arrow-ml-linalg         # Linear algebra, reductions, reshaping, conv, pooling
+├── arrow-ml-activations    # Activation functions (ReLU, GELU, Sigmoid, etc.)
+├── arrow-ml-common         # Shared error types & backend plugin registry
+└── arrow-ml-backend-metal  # Metal GPU backend (macOS, cdylib)
 ```
 
 ## Quick Start
@@ -29,7 +29,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-arrow-kernels = { path = "crates/arrow-kernels" }
+arrow-ml = { path = "crates/arrow-ml" }
 arrow = { version = "57.1.0", default-features = false }
 ```
 
@@ -39,7 +39,7 @@ arrow = { version = "57.1.0", default-features = false }
 use arrow::buffer::{Buffer, ScalarBuffer};
 use arrow::datatypes::Float32Type;
 use arrow::tensor::Tensor;
-use arrow_kernels::tensor_ops::TensorOps;
+use arrow_ml::tensor_ops::TensorOps;
 
 // Create 2x3 and 3x2 tensors
 let a_buf = Buffer::from(ScalarBuffer::<f32>::from(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).into_inner());
@@ -58,7 +58,7 @@ let result = a.dot::<Float32Type>(&b)?
 
 ```rust
 use arrow::array::Float32Array;
-use arrow_kernels::array_ops::ArrayOps;
+use arrow_ml::array_ops::ArrayOps;
 
 let input = Float32Array::from(vec![Some(-1.0), Some(0.0), Some(1.0), None]);
 let activated = input.relu();       // [0.0, 0.0, 1.0, null]
@@ -69,9 +69,9 @@ let sig = input.sigmoid();          // Sigmoid
 ### Direct Kernel Calls
 
 ```rust
-use arrow_kernels_linalg::matmul::matmul;
-use arrow_kernels_linalg::layernorm::layer_norm;
-use arrow_kernels_linalg::conv::conv2d;
+use arrow_ml_linalg::matmul::matmul;
+use arrow_ml_linalg::layernorm::layer_norm;
+use arrow_ml_linalg::conv::conv2d;
 
 let c = matmul(&a, &b)?;            // C = A * B
 ```
@@ -114,18 +114,18 @@ let c = matmul(&a, &b)?;            // C = A * B
 
 On macOS, the Metal backend accelerates `matmul` for large matrices automatically. The dispatch threshold is configurable but defaults to 256×256.
 
-The backend plugin system discovers shared libraries at runtime matching the pattern `libarrow_kernels_backend_*`. To build the Metal backend:
+The backend plugin system discovers shared libraries at runtime matching the pattern `libarrow_ml_backend_*`. To build the Metal backend:
 
 ```sh
-cargo build --release -p arrow-kernels-backend-metal
+cargo build --release -p arrow-ml-backend-metal
 ```
 
-Custom backends can be added by implementing the C ABI contract (see `arrow-kernels-common` for the expected symbols).
+Custom backends can be added by implementing the C ABI contract (see `arrow-ml-common` for the expected symbols).
 
 ## Benchmarks
 
 ```sh
-cargo bench -p arrow-kernels-linalg
+cargo bench -p arrow-ml-linalg
 ```
 
 Benchmarks cover matmul performance across sizes (16–4096) for both `f32` and `f64`, comparing naive vs SIMD vs GPU paths.

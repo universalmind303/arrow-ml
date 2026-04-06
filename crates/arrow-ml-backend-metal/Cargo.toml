@@ -1,0 +1,12 @@
+[package]
+name = "arrow-ml-backend-metal"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+metal = { workspace = true }

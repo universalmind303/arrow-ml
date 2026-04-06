@@ -143,34 +143,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrow-kernels"
+name = "arrow-ml"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "arrow-kernels-activations",
- "arrow-kernels-common",
- "arrow-kernels-linalg",
+ "arrow-ml-activations",
+ "arrow-ml-common",
+ "arrow-ml-linalg",
  "num-traits",
 ]
 
 [[package]]
-name = "arrow-kernels-activations"
+name = "arrow-ml-activations"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "arrow-kernels-common",
+ "arrow-ml-common",
  "num-traits",
 ]
 
 [[package]]
-name = "arrow-kernels-backend-metal"
+name = "arrow-ml-backend-metal"
 version = "0.1.0"
 dependencies = [
  "metal",
 ]
 
 [[package]]
-name = "arrow-kernels-common"
+name = "arrow-ml-common"
 version = "0.1.0"
 dependencies = [
  "arrow",
@@ -180,11 +180,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrow-kernels-linalg"
+name = "arrow-ml-linalg"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "arrow-kernels-common",
+ "arrow-ml-common",
  "criterion",
  "num-traits",
  "rayon",

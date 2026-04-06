@@ -1,17 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/arrow-kernels-common",
-    "crates/arrow-kernels-linalg",
-    "crates/arrow-kernels-activations",
-    "crates/arrow-kernels",
-    "crates/arrow-kernels-backend-metal",
+    "crates/arrow-ml-common",
+    "crates/arrow-ml-linalg",
+    "crates/arrow-ml-activations",
+    "crates/arrow-ml",
+    "crates/arrow-ml-backend-metal",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/universalmind303/arrow-ml"
+homepage = "https://github.com/universalmind303/arrow-ml"
+readme = "README.md"
 
 [workspace.dependencies]
 arrow = {version = "57.1.0", default-features = false}
