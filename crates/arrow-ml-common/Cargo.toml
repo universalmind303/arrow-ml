@@ -15,3 +15,5 @@ arrow = { workspace = true }
 num-traits = { workspace = true }
 libloading = { workspace = true }
 glob = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -23,3 +23,5 @@ rayon = "1.10"
 metal = "0.31"
 libloading = "0.8"
 glob = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

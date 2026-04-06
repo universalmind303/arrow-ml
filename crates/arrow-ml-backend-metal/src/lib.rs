@@ -7,21 +7,31 @@ mod matmul;
 
 use std::ffi::c_char;
 
+/// ABI version this backend was built against. Must match
+/// `arrow_ml_common::backend::ARROW_ML_BACKEND_ABI_VERSION` or the loader
+/// will reject this backend.
+const BACKEND_ABI_VERSION: u32 = 1;
+
 /// ABI result codes (must match arrow-ml-common/src/backend.rs)
-const AK_OK: i32 = 0;
-const AK_ERR_GPU: i32 = -2;
+const AM_OK: i32 = 0;
+const AM_ERR_GPU: i32 = -2;
 
 // ---------------------------------------------------------------------------
 // Mandatory ABI exports
 // ---------------------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn ak_backend_name() -> *const c_char {
+pub extern "C" fn am_backend_abi_version() -> u32 {
+    BACKEND_ABI_VERSION
+}
+
+#[no_mangle]
+pub extern "C" fn am_backend_name() -> *const c_char {
     c"metal".as_ptr()
 }
 
 #[no_mangle]
-pub extern "C" fn ak_backend_priority() -> u32 {
+pub extern "C" fn am_backend_priority() -> u32 {
     100
 }
 
@@ -37,7 +47,7 @@ pub extern "C" fn ak_backend_priority() -> u32 {
 /// - `b` must point to at least `k * n` f32 values.
 /// - `c` must point to at least `m * n` writable f32 values.
 #[no_mangle]
-pub unsafe extern "C" fn ak_matmul_f32(
+pub unsafe extern "C" fn am_matmul_f32(
     a: *const f32,
     b: *const f32,
     c: *mut f32,
@@ -55,8 +65,8 @@ pub unsafe extern "C" fn ak_matmul_f32(
     match matmul::metal_matmul_f32(a_slice, b_slice, m, k, n) {
         Ok(result) => {
             std::ptr::copy_nonoverlapping(result.as_ptr(), c, m * n);
-            AK_OK
+            AM_OK
         }
-        Err(_msg) => AK_ERR_GPU,
+        Err(_msg) => AM_ERR_GPU,
     }
 }

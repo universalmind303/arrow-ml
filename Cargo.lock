@@ -177,6 +177,8 @@ dependencies = [
  "glob",
  "libloading",
  "num-traits",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

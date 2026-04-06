@@ -1,13 +1,38 @@
 //! Runtime backend discovery and dispatch.
 //!
-//! On first access, the registry scans well-known directories for shared
-//! libraries matching `libarrow_ml_backend_*{.dylib,.so,.dll}`, loads
-//! each one, and sorts them by priority (highest first).  Kernel dispatch
-//! functions iterate the list and call the first backend that succeeds.
+//! On first access, the registry scans well-known directories for backends.
+//! Two discovery mechanisms run in order:
+//!
+//! 1. **Manifest scan.** JSON files matching `*.json` in any manifest
+//!    search directory are parsed as [`crate::BackendManifest`]s and the
+//!    libraries they describe are loaded.
+//! 2. **Glob fallback.** Any shared libraries matching
+//!    `libarrow_ml_backend_*{.dylib,.so,.dll}` in a library search directory
+//!    are loaded directly. Libraries already loaded via a manifest are skipped.
+//!
+//! After discovery, backends are sorted by priority (highest first). Kernel
+//! dispatch functions iterate the list and call the first backend that succeeds.
 
-use crate::backend::{AkMatmulF32Fn, AkMatmulF64Fn, Backend, AK_OK};
+use crate::backend::{AmMatmulF32Fn, AmMatmulF64Fn, Backend, AM_OK};
+use crate::manifest::BackendManifest;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
+/// Per-user backend directory:
+/// - Unix: `$HOME/.arrow-ml/backends`
+/// - Windows: `%LOCALAPPDATA%\arrow-ml\backends`
+fn user_backend_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(|p| PathBuf::from(p).join("arrow-ml").join("backends"))
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".arrow-ml").join("backends"))
+    }
+}
 
 /// Returns the glob pattern for backend shared libraries on the current OS.
 fn dylib_glob_pattern() -> &'static str {
@@ -36,14 +61,56 @@ impl BackendRegistry {
     /// Scan the search paths, load every valid backend, sort by priority.
     fn discover() -> BackendRegistry {
         let mut backends = Vec::new();
+        let mut loaded_paths: HashSet<PathBuf> = HashSet::new();
 
-        for dir in Self::search_dirs() {
+        // 1. Manifest-driven discovery
+        for dir in Self::manifest_search_dirs() {
+            let pattern = dir.join("*.json");
+            let glob = match glob::glob(pattern.to_string_lossy().as_ref()) {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            for manifest_path in glob.flatten() {
+                let manifest = match BackendManifest::from_path(&manifest_path) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!(
+                            "[arrow-ml] skipping malformed manifest {}: {}",
+                            manifest_path.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+                let lib_path = manifest.resolve_library_path(&manifest_path);
+                let canonical = std::fs::canonicalize(&lib_path).unwrap_or_else(|_| lib_path.clone());
+                if !loaded_paths.insert(canonical) {
+                    continue;
+                }
+                if let Some(backend) = Backend::load(&lib_path) {
+                    eprintln!(
+                        "[arrow-ml] loaded backend {:?} (priority {}) from manifest {}",
+                        backend.name,
+                        backend.priority,
+                        manifest_path.display()
+                    );
+                    backends.push(backend);
+                }
+            }
+        }
+
+        // 2. Glob fallback
+        for dir in Self::library_search_dirs() {
             let pattern = dylib_glob_pattern();
             let glob = match glob::glob(dir.join(&pattern).to_string_lossy().as_ref()) {
                 Ok(g) => g,
                 Err(_) => continue,
             };
             for entry in glob.flatten() {
+                let canonical = std::fs::canonicalize(&entry).unwrap_or_else(|_| entry.clone());
+                if !loaded_paths.insert(canonical) {
+                    continue;
+                }
                 if let Some(backend) = Backend::load(&entry) {
                     eprintln!(
                         "[arrow-ml] loaded backend {:?} (priority {}) from {}",
@@ -66,27 +133,62 @@ impl BackendRegistry {
         BackendRegistry { backends }
     }
 
-    /// Directories to scan for backend shared libraries.
-    fn search_dirs() -> Vec<PathBuf> {
+    /// Directories to scan for `*.json` backend manifests.
+    fn manifest_search_dirs() -> Vec<PathBuf> {
         let mut dirs = Vec::new();
 
-        // 1. Explicit env var
+        if let Ok(dir) = std::env::var("ARROW_ML_BACKEND_MANIFEST_DIR") {
+            dirs.push(PathBuf::from(dir));
+        }
+
+        if let Some(user) = user_backend_dir() {
+            dirs.push(user);
+        }
+
+        #[cfg(unix)]
+        dirs.push(PathBuf::from("/etc/arrow-ml/backends"));
+
+        dirs.extend(Self::shared_runtime_dirs());
+
+        dirs
+    }
+
+    /// Directories to scan for backend shared libraries (glob fallback).
+    fn library_search_dirs() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+
         if let Ok(dir) = std::env::var("ARROW_ML_BACKEND_DIR") {
             dirs.push(PathBuf::from(dir));
         }
 
-        // 2. Next to the running executable
+        if let Some(user) = user_backend_dir() {
+            dirs.push(user);
+        }
+
+        #[cfg(unix)]
+        dirs.push(PathBuf::from("/etc/arrow-ml/backends"));
+
+        dirs.extend(Self::shared_runtime_dirs());
+
+        dirs
+    }
+
+    /// Directories searched by both manifest and library discovery: next to
+    /// the running executable, plus workspace `target/{debug,release}` for
+    /// dev convenience.
+    fn shared_runtime_dirs() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+
         if let Ok(exe) = std::env::current_exe() {
             if let Some(exe_dir) = exe.parent() {
                 dirs.push(exe_dir.to_path_buf());
             }
         }
 
-        // 3. Cargo target dirs (dev convenience)
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
             let workspace_root = PathBuf::from(manifest_dir)
                 .ancestors()
-                .nth(2) // crates/<name>/ -> workspace root
+                .nth(2)
                 .map(|p| p.to_path_buf());
             if let Some(root) = workspace_root {
                 dirs.push(root.join("target").join("debug"));
@@ -104,13 +206,13 @@ impl BackendRegistry {
 
     /// Returns the highest-priority `matmul_f32` function pointer, if any
     /// backend provides one.
-    pub fn matmul_f32(&self) -> Option<AkMatmulF32Fn> {
+    pub fn matmul_f32(&self) -> Option<AmMatmulF32Fn> {
         self.backends.iter().find_map(|b| b.matmul_f32)
     }
 
     /// Returns the highest-priority `matmul_f64` function pointer, if any
     /// backend provides one.
-    pub fn matmul_f64(&self) -> Option<AkMatmulF64Fn> {
+    pub fn matmul_f64(&self) -> Option<AmMatmulF64Fn> {
         self.backends.iter().find_map(|b| b.matmul_f64)
     }
 
@@ -136,7 +238,7 @@ impl BackendRegistry {
                 n as u32,
             )
         };
-        if rc == AK_OK {
+        if rc == AM_OK {
             Some(())
         } else {
             None
@@ -164,7 +266,7 @@ impl BackendRegistry {
                 n as u32,
             )
         };
-        if rc == AK_OK {
+        if rc == AM_OK {
             Some(())
         } else {
             None

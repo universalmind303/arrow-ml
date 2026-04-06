@@ -1,0 +1,10 @@
+{
+    "file_format_version": "1.0.0",
+    "backend": {
+        "name": "metal",
+        "library_path": "libarrow_ml_backend_metal.dylib",
+        "abi_version": 1,
+        "priority": 100,
+        "description": "Apple Metal GPU backend for arrow-ml"
+    }
+}
