@@ -29,9 +29,12 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-arrow-ml = { path = "crates/arrow-ml" }
-arrow = { version = "57.1.0", default-features = false }
+arrow-ml = "0.1"
+arrow = { version = ">=56, <59", default-features = false }
 ```
+
+`arrow-ml` is tested against arrow 56–58. Pick whichever version in that
+range fits the rest of your dependency tree.
 
 ### Tensor Operations
 
@@ -114,13 +117,27 @@ let c = matmul(&a, &b)?;            // C = A * B
 
 On macOS, the Metal backend accelerates `matmul` for large matrices automatically. The dispatch threshold is configurable but defaults to 256×256.
 
-The backend plugin system discovers shared libraries at runtime matching the pattern `libarrow_ml_backend_*`. To build the Metal backend:
+The backend plugin system discovers backends at runtime via two parallel
+mechanisms:
+
+1. **JSON manifests** (Vulkan-ICD style) — `*.json` files in
+   `~/.arrow-ml/backends/`, `/etc/arrow-ml/backends/`, or
+   `$ARROW_ML_BACKEND_MANIFEST_DIR`. A reference manifest ships at
+   `crates/arrow-ml-backend-metal/manifests/metal.json`.
+2. **Glob fallback** — shared libraries matching `libarrow_ml_backend_*`
+   sitting next to the running executable, in `$ARROW_ML_BACKEND_DIR`, or
+   in the workspace `target/{debug,release}` during development.
+
+To build the Metal backend:
 
 ```sh
 cargo build --release -p arrow-ml-backend-metal
 ```
 
-Custom backends can be added by implementing the C ABI contract (see `arrow-ml-common` for the expected symbols).
+Custom backends can be added by implementing the C ABI contract — every
+backend must export `am_backend_abi_version`, `am_backend_name`, and
+`am_backend_priority`. See `arrow_ml_common::backend` for the full
+function-pointer types and the current `ARROW_ML_BACKEND_ABI_VERSION`.
 
 ## Benchmarks
 
@@ -133,7 +150,7 @@ Benchmarks cover matmul performance across sizes (16–4096) for both `f32` and 
 ## Requirements
 
 - **Rust nightly** (uses `portable_simd`)
-- Arrow 57.1.0
+- Arrow 56–58
 - macOS for Metal GPU backend (optional)
 
 ## License
