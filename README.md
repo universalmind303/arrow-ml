@@ -19,9 +19,14 @@ High-performance machine learning kernels built on [Apache Arrow](https://arrow.
 arrow-ml              # Unified public API with TensorOps / ArrayOps traits
 ├── arrow-ml-linalg         # Linear algebra, reductions, reshaping, conv, pooling
 ├── arrow-ml-activations    # Activation functions (ReLU, GELU, Sigmoid, etc.)
-├── arrow-ml-common         # Shared error types & backend plugin registry
-└── arrow-ml-backend-metal  # Metal GPU backend (macOS, cdylib)
+└── arrow-ml-common         # Shared error types & backend plugin registry
+
+arrow-ml-backend-metal      # Metal GPU backend (macOS, cdylib) — standalone crate
 ```
+
+The first four crates are a single cargo workspace; `arrow-ml-backend-metal`
+sits beside it as an independent crate with its own release pipeline so that
+the cross-platform crates stay buildable on every target.
 
 ## Quick Start
 
@@ -128,11 +133,17 @@ mechanisms:
    sitting next to the running executable, in `$ARROW_ML_BACKEND_DIR`, or
    in the workspace `target/{debug,release}` during development.
 
-To build the Metal backend:
+The Metal backend lives in its own standalone crate (not part of the cargo
+workspace) so that the rest of arrow-ml stays cross-platform. To build it:
 
 ```sh
-cargo build --release -p arrow-ml-backend-metal
+cd crates/arrow-ml-backend-metal
+cargo build --release
 ```
+
+Or, as a downstream consumer, just add `arrow-ml-backend-metal = "0.1"` to
+your `Cargo.toml` alongside `arrow-ml` — Cargo will produce the cdylib in
+your `target/` directory and arrow-ml's runtime registry will discover it.
 
 Custom backends can be added by implementing the C ABI contract — every
 backend must export `am_backend_abi_version`, `am_backend_name`, and

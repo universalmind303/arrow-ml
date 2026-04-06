@@ -3,15 +3,15 @@ name = "arrow-ml-backend-metal"
 description = "Metal GPU backend plugin for arrow-ml. Discovered at runtime by arrow-ml-common's backend registry."
 keywords = ["arrow", "ml", "metal", "gpu", "backend"]
 categories = ["science", "mathematics"]
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-readme.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/universalmind303/arrow-ml"
+homepage = "https://github.com/universalmind303/arrow-ml"
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-metal = { workspace = true }
+metal = "0.31"
