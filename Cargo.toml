@@ -17,7 +17,7 @@ homepage = "https://github.com/universalmind303/arrow-ml"
 readme = "README.md"
 
 [workspace.dependencies]
-arrow = {version = "57.1.0", default-features = false}
+arrow = { version = ">=56, <59", default-features = false }
 num-traits = "0.2"
 rayon = "1.10"
 metal = "0.31"
