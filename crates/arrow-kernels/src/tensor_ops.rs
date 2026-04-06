@@ -5,7 +5,8 @@ use num_traits::Float;
 use std::ops::{Add, AddAssign, Mul};
 
 use arrow_kernels_linalg::{
-    clip, cumsum, elementwise_math, expand, reduce, reshape, rounding, transpose,
+    binary_arithmetic, clip, cumsum, elementwise_math, expand, reduce, reshape, rounding,
+    transpose,
 };
 
 /// Extension trait for method-style chaining on `Tensor`.
@@ -155,6 +156,48 @@ pub trait TensorOps<T: ArrowPrimitiveType> {
     fn softmax(&self, axis: i64) -> Result<Tensor<'static, T>>
     where
         T::Native: Float + AddAssign;
+
+    // --- Binary arithmetic with broadcasting ---
+
+    /// Element-wise addition with broadcasting.
+    fn add(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise subtraction with broadcasting.
+    fn sub(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise multiplication with broadcasting.
+    fn mul(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise division with broadcasting.
+    fn div(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise square root.
+    fn sqrt(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise exponential (e^x).
+    fn exp(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Element-wise natural logarithm.
+    fn log(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float;
+
+    /// Transpose with arbitrary axis permutation.
+    fn transpose_axes(&self, perm: &[usize]) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Copy;
 }
 
 impl<T: ArrowPrimitiveType> TensorOps<T> for Tensor<'_, T> {
@@ -344,5 +387,61 @@ impl<T: ArrowPrimitiveType> TensorOps<T> for Tensor<'_, T> {
         T::Native: Float + AddAssign,
     {
         arrow_kernels_activations::softmax::softmax_tensor(self, axis)
+    }
+
+    fn add(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        binary_arithmetic::add(self, other)
+    }
+
+    fn sub(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        binary_arithmetic::sub(self, other)
+    }
+
+    fn mul(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        binary_arithmetic::mul(self, other)
+    }
+
+    fn div(&self, other: &Tensor<'_, T>) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        binary_arithmetic::div(self, other)
+    }
+
+    fn sqrt(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        elementwise_math::sqrt(self)
+    }
+
+    fn exp(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        elementwise_math::exp(self)
+    }
+
+    fn log(&self) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Float,
+    {
+        elementwise_math::log(self)
+    }
+
+    fn transpose_axes(&self, perm: &[usize]) -> Result<Tensor<'static, T>>
+    where
+        T::Native: Copy,
+    {
+        transpose::transpose_axes(self, perm)
     }
 }
