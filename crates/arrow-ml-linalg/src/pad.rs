@@ -43,7 +43,7 @@ where
     let out_strides = row_major_strides(&out_shape);
 
     let mut nd_index = vec![0usize; ndims];
-    for flat_in in 0..in_len {
+    for (flat_in, &val) in data.iter().enumerate().take(in_len) {
         flat_to_nd(flat_in, &in_strides, &mut nd_index);
 
         let mut flat_out = 0;
@@ -51,7 +51,7 @@ where
             flat_out += (nd_index[d] + pads[d]) * out_strides[d];
         }
 
-        out[flat_out] = data[flat_in];
+        out[flat_out] = val;
     }
 
     let buf = Buffer::from_vec(out);
@@ -81,7 +81,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

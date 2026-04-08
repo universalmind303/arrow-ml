@@ -11,7 +11,7 @@ unsafe impl<T> Send for RawMutPtr<T> {}
 unsafe impl<T> Sync for RawMutPtr<T> {}
 
 impl<T> RawMutPtr<T> {
-    fn as_ptr(self) -> *mut T {
+    fn ptr(self) -> *mut T {
         self.0
     }
 }
@@ -34,6 +34,8 @@ const NC: usize = 4096;
 /// `c`: pointer to the (ir, jr) corner of the output matrix, row-major with stride `ldc`
 /// `first`: if true, overwrite C; if false, accumulate into C
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 unsafe fn microkernel(
     packed_a: &[f32],
     packed_b: &[f32],
@@ -127,6 +129,7 @@ unsafe fn microkernel(
 /// Macro-kernel: processes one MC×NC tile of C, given packed A and shared packed B.
 ///
 /// SAFETY: all packed buffer offsets and c_slice indexing must be in-bounds.
+#[allow(clippy::too_many_arguments)]
 unsafe fn macrokernel(
     packed_a: &[f32],
     packed_b: &[f32],
@@ -170,12 +173,11 @@ pub fn gemm(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
 
     // Pre-allocate packed B buffer (reused across iterations)
-    let packed_b_len = KC * ((NC + NR - 1) / NR * NR);
-    let mut packed_b = Vec::<f32>::with_capacity(packed_b_len);
-    unsafe { packed_b.set_len(packed_b_len) };
+    let packed_b_len = KC * (NC.div_ceil(NR) * NR);
+    let mut packed_b = vec![0.0f32; packed_b_len];
 
     // Max packed A size per thread
-    let packed_a_len = ((MC + MR - 1) / MR * MR) * KC;
+    let packed_a_len = (MC.div_ceil(MR) * MR) * KC;
 
     for jc in (0..n).step_by(NC) {
         let nc = NC.min(n - jc);
@@ -194,11 +196,7 @@ pub fn gemm(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 
             // for_each_init: allocate packed_a once per worker thread, reuse across blocks
             ic_blocks.par_iter().for_each_init(
-                || {
-                    let mut buf = Vec::<f32>::with_capacity(packed_a_len);
-                    unsafe { buf.set_len(packed_a_len) };
-                    buf
-                },
+                || vec![0.0f32; packed_a_len],
                 |packed_a, &ic| {
                     let mc = MC.min(m - ic);
                     packing::pack_a(a, k, ic, pc, mc, kc, MR, packed_a);
@@ -206,7 +204,7 @@ pub fn gemm(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
                     unsafe {
                         let c_row_start = ic * n + jc;
                         let c_slice = std::slice::from_raw_parts_mut(
-                            c_ptr.as_ptr().add(c_row_start),
+                            c_ptr.ptr().add(c_row_start),
                             c_len - c_row_start,
                         );
                         macrokernel(packed_a, &packed_b, c_slice, n, mc, nc, kc, first);

@@ -23,10 +23,10 @@ where
     let mut coord_lists: Vec<Vec<i64>> = vec![vec![]; ndim];
     let mut coords = vec![0usize; ndim];
 
-    for i in 0..total {
-        if !data[i].is_zero() {
-            for d in 0..ndim {
-                coord_lists[d].push(coords[d] as i64);
+    for &val in data.iter().take(total) {
+        if !val.is_zero() {
+            for (d, &coord) in coords.iter().enumerate() {
+                coord_lists[d].push(coord as i64);
             }
         }
 
@@ -47,8 +47,7 @@ where
         // Return a shape [ndim, 1] tensor filled with -1 as sentinel for "no nonzero elements".
         let sentinel = vec![-1i64; ndim];
         let buf = Buffer::from_vec(sentinel);
-        return Tensor::new_row_major(buf, Some(vec![ndim, 1]), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(vec![ndim, 1]), None).map_err(KernelError::from);
     }
 
     // Output shape: (ndim, num_nonzero) — row-major means we lay out dim0 coords, then dim1 coords, etc.
@@ -68,7 +67,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

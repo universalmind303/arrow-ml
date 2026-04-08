@@ -164,7 +164,7 @@ where
 
                 // Start with bias if present
                 let bias_val = match bias_vals {
-                    Some(ref bv) => bv[oc],
+                    Some(bv) => bv[oc],
                     None => zero,
                 };
 
@@ -228,7 +228,7 @@ mod tests {
 
     /// Helper: create an N-dimensional f32 tensor from flat data + shape.
     fn make_f32_tensor(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
@@ -262,11 +262,11 @@ mod tests {
         let out = simple_conv2d(&input, &weight).unwrap();
         assert_eq!(out.shape().unwrap(), &vec![1, 1, 3, 3]);
         let data = out.data().typed_data::<f32>();
-        for i in 0..9 {
+        for (i, &val) in data.iter().enumerate().take(9) {
             assert!(
-                (data[i] - (i as f32 + 1.0)).abs() < 1e-6,
+                (val - (i as f32 + 1.0)).abs() < 1e-6,
                 "mismatch at {i}: got {} expected {}",
-                data[i],
+                val,
                 i as f32 + 1.0
             );
         }

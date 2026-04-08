@@ -82,9 +82,8 @@ where
 
         // Copy slice from updates to output
         let upd_base = u * slice_size;
-        for s in 0..slice_size {
-            out[flat_offset + s] = upd_data[upd_base + s];
-        }
+        out[flat_offset..flat_offset + slice_size]
+            .copy_from_slice(&upd_data[upd_base..upd_base + slice_size]);
     }
 
     let buf = Buffer::from_vec(out);
@@ -98,12 +97,12 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
     fn make_i64(data: Vec<i64>, shape: Vec<usize>) -> Tensor<'static, Int64Type> {
-        let buffer = Buffer::from(ScalarBuffer::<i64>::from(data).into_inner());
+        let buffer = ScalarBuffer::<i64>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

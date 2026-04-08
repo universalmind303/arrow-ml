@@ -156,8 +156,7 @@ where
 
     // Compute output shape
     let mut out_shape = Vec::with_capacity(ndim);
-    for d in 0..ndim {
-        let (s, e, step) = dim_ranges[d];
+    for &(s, e, step) in &dim_ranges {
         let count = if step > 0 {
             ((e - s + step - 1) / step).max(0) as usize
         } else {
@@ -214,7 +213,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

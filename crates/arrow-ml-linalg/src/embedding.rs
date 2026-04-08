@@ -54,7 +54,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32_2d(data: Vec<f32>, rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
     }
 

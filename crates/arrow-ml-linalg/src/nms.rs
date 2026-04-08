@@ -111,10 +111,10 @@ pub fn non_max_suppression(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::buffer::{Buffer, ScalarBuffer};
+    use arrow::buffer::ScalarBuffer;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

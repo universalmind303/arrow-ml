@@ -95,7 +95,7 @@ mod tests {
         h: usize,
         w: usize,
     ) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![n, c, h, w]), None).unwrap()
     }
 
@@ -109,8 +109,8 @@ mod tests {
         let var = Float32Array::from(vec![1.0]);
         let out = batch_norm(&input, &scale, &bias, &mean, &var, 1e-5).unwrap();
         let data = out.data().typed_data::<f32>();
-        for i in 0..4 {
-            assert!((data[i] - (i as f32 + 1.0)).abs() < 1e-3);
+        for (i, &val) in data.iter().enumerate().take(4) {
+            assert!((val - (i as f32 + 1.0)).abs() < 1e-3);
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_wrong_dimensionality() {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(vec![1.0, 2.0]).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(vec![1.0, 2.0]).into_inner();
         let input: Tensor<'_, Float32Type> =
             Tensor::new_row_major(buffer, Some(vec![1, 2]), None).unwrap();
         let scale = Float32Array::from(vec![1.0]);

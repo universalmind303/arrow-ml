@@ -132,7 +132,10 @@ mod tests {
         }"#;
         let m: BackendManifest = serde_json::from_str(json).unwrap();
         assert_eq!(m.backend.priority, 100);
-        assert_eq!(m.backend.description.as_deref(), Some("Apple Metal GPU backend"));
+        assert_eq!(
+            m.backend.description.as_deref(),
+            Some("Apple Metal GPU backend")
+        );
     }
 
     #[test]

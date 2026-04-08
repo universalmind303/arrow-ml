@@ -1,5 +1,5 @@
 use arrow::array::ArrowPrimitiveType;
-use arrow::buffer::{Buffer, ScalarBuffer};
+use arrow::buffer::ScalarBuffer;
 use arrow::tensor::Tensor;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
@@ -41,7 +41,7 @@ where
         }
     }
 
-    let buffer = Buffer::from(ScalarBuffer::<T::Native>::from(result).into_inner());
+    let buffer = ScalarBuffer::<T::Native>::from(result).into_inner();
     Tensor::new_row_major(buffer, Some(vec![n, m]), None).map_err(KernelError::from)
 }
 
@@ -114,7 +114,7 @@ where
         }
     }
 
-    let buffer = Buffer::from(ScalarBuffer::<T::Native>::from(result).into_inner());
+    let buffer = ScalarBuffer::<T::Native>::from(result).into_inner();
     Tensor::new_row_major(buffer, Some(out_shape), None).map_err(KernelError::from)
 }
 
@@ -129,7 +129,7 @@ mod tests {
         rows: usize,
         cols: usize,
     ) -> Tensor<'static, T> {
-        let buffer = Buffer::from(ScalarBuffer::<T::Native>::from(data).into_inner());
+        let buffer = ScalarBuffer::<T::Native>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
     }
 
@@ -171,7 +171,7 @@ mod tests {
     }
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

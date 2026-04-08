@@ -20,9 +20,9 @@ where
     T: ArrowPrimitiveType,
     T::Native: Copy,
 {
-    let idx_shape = indices.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("onehot: indices has no shape".into())
-    })?;
+    let idx_shape = indices
+        .shape()
+        .ok_or_else(|| KernelError::InvalidArgument("onehot: indices has no shape".into()))?;
     let idx_ndim = idx_shape.len();
     let out_ndim = idx_ndim + 1;
 
@@ -66,8 +66,8 @@ where
 
     // For each index element, compute its coordinates, insert the one-hot dim
     let mut idx_coords = vec![0usize; idx_ndim];
-    for i in 0..idx_total {
-        let mut hot_idx = idx_data[i];
+    for &raw_idx in idx_data.iter().take(idx_total) {
+        let mut hot_idx = raw_idx;
         if hot_idx < 0 {
             hot_idx += depth as i64;
         }
@@ -75,11 +75,11 @@ where
             // Build output coordinate: insert hot_idx at axis position
             let mut out_flat = 0;
             let mut src_d = 0;
-            for d in 0..out_ndim {
+            for (d, &stride) in out_strides.iter().enumerate().take(out_ndim) {
                 if d == axis {
-                    out_flat += hot_idx as usize * out_strides[d];
+                    out_flat += hot_idx as usize * stride;
                 } else {
-                    out_flat += idx_coords[src_d] * out_strides[d];
+                    out_flat += idx_coords[src_d] * stride;
                     src_d += 1;
                 }
             }
@@ -107,7 +107,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_i64(data: Vec<i64>, shape: Vec<usize>) -> Tensor<'static, Int64Type> {
-        let buffer = Buffer::from(ScalarBuffer::<i64>::from(data).into_inner());
+        let buffer = ScalarBuffer::<i64>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

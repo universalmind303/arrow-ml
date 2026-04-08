@@ -5,8 +5,7 @@ use num_traits::Float;
 use std::ops::{Add, AddAssign, Mul};
 
 use arrow_ml_linalg::{
-    binary_arithmetic, clip, cumsum, elementwise_math, expand, reduce, reshape, rounding,
-    transpose,
+    binary_arithmetic, clip, cumsum, elementwise_math, expand, reduce, reshape, rounding, transpose,
 };
 
 /// Extension trait for method-style chaining on `Tensor`.

@@ -409,18 +409,18 @@ mod tests {
     use arrow::datatypes::{Float32Type, Float64Type};
 
     fn make_f32_2d(data: Vec<f32>, rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
     }
 
     fn make_f64_2d(data: Vec<f64>, rows: usize, cols: usize) -> Tensor<'static, Float64Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f64>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f64>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
     }
 
     fn make_f32_1d(data: Vec<f32>) -> Tensor<'static, Float32Type> {
         let len = data.len();
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![len]), None).unwrap()
     }
 

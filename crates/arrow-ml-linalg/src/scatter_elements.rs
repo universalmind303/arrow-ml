@@ -44,11 +44,7 @@ where
         });
     }
 
-    let axis = if axis < 0 {
-        ndim as i64 + axis
-    } else {
-        axis
-    };
+    let axis = if axis < 0 { ndim as i64 + axis } else { axis };
     if axis < 0 || axis >= ndim as i64 {
         return Err(KernelError::InvalidArgument(format!(
             "scatter_elements: axis {} out of range for {}D tensor",
@@ -127,12 +123,12 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
     fn make_i64(data: Vec<i64>, shape: Vec<usize>) -> Tensor<'static, Int64Type> {
-        let buffer = Buffer::from(ScalarBuffer::<i64>::from(data).into_inner());
+        let buffer = ScalarBuffer::<i64>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
@@ -156,7 +152,10 @@ mod tests {
         let indices = make_i64(vec![2, 0], vec![2, 1]);
         let updates = make_f32(vec![9.0, 8.0], vec![2, 1]);
         let out = scatter_elements::<Float32Type>(&data, &indices, &updates, 1).unwrap();
-        assert_eq!(out.data().typed_data::<f32>(), &[1.0, 2.0, 9.0, 8.0, 5.0, 6.0]);
+        assert_eq!(
+            out.data().typed_data::<f32>(),
+            &[1.0, 2.0, 9.0, 8.0, 5.0, 6.0]
+        );
     }
 
     #[test]

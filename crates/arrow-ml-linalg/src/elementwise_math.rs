@@ -167,7 +167,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
@@ -282,7 +282,14 @@ mod tests {
 
     #[test]
     fn test_log() {
-        let input = make_f32(vec![1.0, std::f32::consts::E, std::f32::consts::E * std::f32::consts::E], vec![3]);
+        let input = make_f32(
+            vec![
+                1.0,
+                std::f32::consts::E,
+                std::f32::consts::E * std::f32::consts::E,
+            ],
+            vec![3],
+        );
         let out = log::<Float32Type>(&input).unwrap();
         let data = out.data().typed_data::<f32>();
         assert!((data[0] - 0.0).abs() < 1e-6);

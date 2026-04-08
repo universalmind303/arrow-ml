@@ -272,7 +272,7 @@ mod tests {
         w: usize,
     ) -> Tensor<'static, Float32Type> {
         assert_eq!(data.len(), n * c * h * w, "data length mismatch");
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![n, c, h, w]), None).unwrap()
     }
 
@@ -592,7 +592,7 @@ mod tests {
     #[test]
     fn test_not_4d_errors() {
         // 2D tensor should fail.
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(vec![1.0, 2.0, 3.0, 4.0]).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(vec![1.0, 2.0, 3.0, 4.0]).into_inner();
         let input: Tensor<'static, Float32Type> =
             Tensor::new_row_major(buffer, Some(vec![2, 2]), None).unwrap();
         assert!(max_pool2d::<Float32Type>(&input, [1, 1], [1, 1], [0, 0]).is_err());

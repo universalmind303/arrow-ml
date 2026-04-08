@@ -86,18 +86,17 @@ impl Backend {
         let lib = unsafe { libloading::Library::new(path) }.ok()?;
 
         // ABI version check first — refuse anything that doesn't match.
-        let abi_fn: AmBackendAbiVersionFn = match unsafe {
-            lib.get::<AmBackendAbiVersionFn>(b"am_backend_abi_version\0")
-        } {
-            Ok(sym) => *sym,
-            Err(_) => {
-                eprintln!(
-                    "[arrow-ml] backend at {} is missing am_backend_abi_version — skipping",
-                    path.display()
-                );
-                return None;
-            }
-        };
+        let abi_fn: AmBackendAbiVersionFn =
+            match unsafe { lib.get::<AmBackendAbiVersionFn>(b"am_backend_abi_version\0") } {
+                Ok(sym) => *sym,
+                Err(_) => {
+                    eprintln!(
+                        "[arrow-ml] backend at {} is missing am_backend_abi_version — skipping",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
         let reported = unsafe { abi_fn() };
         if reported != ARROW_ML_BACKEND_ABI_VERSION {
             eprintln!(
