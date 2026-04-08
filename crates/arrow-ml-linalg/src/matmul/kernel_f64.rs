@@ -146,6 +146,7 @@ unsafe fn macrokernel(
 }
 
 /// Tiled, packed, SIMD-vectorized, multi-threaded GEMM for f64.
+#[allow(clippy::uninit_vec)]
 pub fn gemm(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     use rayon::prelude::*;
 

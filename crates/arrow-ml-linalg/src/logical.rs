@@ -8,9 +8,7 @@ use crate::broadcast::broadcast_binary_op;
 pub fn logical_not(input: &Tensor<'_, UInt8Type>) -> Result<Tensor<'static, UInt8Type>> {
     let shape = input
         .shape()
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("logical_not: tensor has no shape".into())
-        })?
+        .ok_or_else(|| KernelError::InvalidArgument("logical_not: tensor has no shape".into()))?
         .to_vec();
     let data: &[u8] = input.data().typed_data();
     let out: Vec<u8> = data

@@ -48,13 +48,11 @@ where
             }
         }
         let buf = Buffer::from_vec(out);
-        return Tensor::new_row_major(buf, Some(shape_x.to_vec()), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(shape_x.to_vec()), None).map_err(KernelError::from);
     }
 
     // Broadcast path
-    let (out_shape, x_strides, y_strides) =
-        broadcast_shapes(shape_x, shape_y, "where_cond")?;
+    let (out_shape, x_strides, y_strides) = broadcast_shapes(shape_x, shape_y, "where_cond")?;
     let total: usize = out_shape.iter().product();
     let ndim = out_shape.len();
 

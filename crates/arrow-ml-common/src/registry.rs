@@ -25,8 +25,7 @@ use std::sync::OnceLock;
 fn user_backend_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        std::env::var_os("LOCALAPPDATA")
-            .map(|p| PathBuf::from(p).join("arrow-ml").join("backends"))
+        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("arrow-ml").join("backends"))
     }
     #[cfg(not(windows))]
     {
@@ -83,7 +82,8 @@ impl BackendRegistry {
                     }
                 };
                 let lib_path = manifest.resolve_library_path(&manifest_path);
-                let canonical = std::fs::canonicalize(&lib_path).unwrap_or_else(|_| lib_path.clone());
+                let canonical =
+                    std::fs::canonicalize(&lib_path).unwrap_or_else(|_| lib_path.clone());
                 if !loaded_paths.insert(canonical) {
                     continue;
                 }
@@ -102,7 +102,7 @@ impl BackendRegistry {
         // 2. Glob fallback
         for dir in Self::library_search_dirs() {
             let pattern = dylib_glob_pattern();
-            let glob = match glob::glob(dir.join(&pattern).to_string_lossy().as_ref()) {
+            let glob = match glob::glob(dir.join(pattern).to_string_lossy().as_ref()) {
                 Ok(g) => g,
                 Err(_) => continue,
             };
@@ -124,7 +124,7 @@ impl BackendRegistry {
         }
 
         // Highest priority first
-        backends.sort_by(|a, b| b.priority.cmp(&a.priority));
+        backends.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         if backends.is_empty() {
             eprintln!("[arrow-ml] no GPU backends found, using CPU kernels");

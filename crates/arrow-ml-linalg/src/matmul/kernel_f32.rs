@@ -164,6 +164,7 @@ unsafe fn macrokernel(
 /// Tiled, packed, SIMD-vectorized, multi-threaded GEMM for f32.
 ///
 /// Computes C = A * B where A is (m x k) and B is (k x n), all row-major.
+#[allow(clippy::uninit_vec)]
 pub fn gemm(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     use rayon::prelude::*;
 

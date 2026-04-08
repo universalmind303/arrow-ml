@@ -20,9 +20,9 @@ where
     T: ArrowPrimitiveType,
     T::Native: Copy,
 {
-    let idx_shape = indices.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("onehot: indices has no shape".into())
-    })?;
+    let idx_shape = indices
+        .shape()
+        .ok_or_else(|| KernelError::InvalidArgument("onehot: indices has no shape".into()))?;
     let idx_ndim = idx_shape.len();
     let out_ndim = idx_ndim + 1;
 

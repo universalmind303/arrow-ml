@@ -103,8 +103,7 @@ where
             .map(|(&x, &y)| op(x, y))
             .collect();
         let buf = Buffer::from_vec(out);
-        return Tensor::new_row_major(buf, Some(shape_a.to_vec()), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(shape_a.to_vec()), None).map_err(KernelError::from);
     }
 
     // Fast path: scalar broadcast (one input is a single element)
@@ -112,15 +111,13 @@ where
         let scalar = data_a[0];
         let out: Vec<C::Native> = data_b.iter().map(|&y| op(scalar, y)).collect();
         let buf = Buffer::from_vec(out);
-        return Tensor::new_row_major(buf, Some(shape_b.to_vec()), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(shape_b.to_vec()), None).map_err(KernelError::from);
     }
     if data_b.len() == 1 {
         let scalar = data_b[0];
         let out: Vec<C::Native> = data_a.iter().map(|&x| op(x, scalar)).collect();
         let buf = Buffer::from_vec(out);
-        return Tensor::new_row_major(buf, Some(shape_a.to_vec()), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(shape_a.to_vec()), None).map_err(KernelError::from);
     }
 
     // General path: strided coordinate iteration
@@ -200,8 +197,7 @@ mod tests {
     fn test_binary_op_same_shape() {
         let a = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
         let b = make_f32(vec![4.0, 5.0, 6.0], vec![3]);
-        let out: Tensor<Float32Type> =
-            broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
+        let out: Tensor<Float32Type> = broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
         assert_eq!(out.shape().unwrap(), &[3]);
         assert_eq!(out.data().typed_data::<f32>(), &[5.0, 7.0, 9.0]);
     }
@@ -210,8 +206,7 @@ mod tests {
     fn test_binary_op_scalar_broadcast() {
         let a = make_f32(vec![2.0], vec![1]);
         let b = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
-        let out: Tensor<Float32Type> =
-            broadcast_binary_op(&a, &b, |x, y| x * y, "mul").unwrap();
+        let out: Tensor<Float32Type> = broadcast_binary_op(&a, &b, |x, y| x * y, "mul").unwrap();
         assert_eq!(out.data().typed_data::<f32>(), &[2.0, 4.0, 6.0]);
     }
 
@@ -220,8 +215,7 @@ mod tests {
         // [3,1] + [1,4] -> [3,4]
         let a = make_f32(vec![10.0, 20.0, 30.0], vec![3, 1]);
         let b = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![1, 4]);
-        let out: Tensor<Float32Type> =
-            broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
+        let out: Tensor<Float32Type> = broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
         assert_eq!(out.shape().unwrap(), &[3, 4]);
         let data = out.data().typed_data::<f32>();
         assert_eq!(
@@ -238,9 +232,11 @@ mod tests {
     fn test_binary_op_rank_extension() {
         // [4] + [2,4] -> [2,4]
         let a = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![4]);
-        let b = make_f32(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0], vec![2, 4]);
-        let out: Tensor<Float32Type> =
-            broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
+        let b = make_f32(
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+            vec![2, 4],
+        );
+        let out: Tensor<Float32Type> = broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
         assert_eq!(out.shape().unwrap(), &[2, 4]);
         let data = out.data().typed_data::<f32>();
         assert_eq!(data, &[11.0, 22.0, 33.0, 44.0, 51.0, 62.0, 73.0, 84.0]);
@@ -250,16 +246,18 @@ mod tests {
     fn test_binary_op_3d_broadcast() {
         // [1,3,1] + [2,1,4] -> [2,3,4]
         let a = make_f32(vec![1.0, 2.0, 3.0], vec![1, 3, 1]);
-        let b = make_f32(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0], vec![2, 1, 4]);
-        let out: Tensor<Float32Type> =
-            broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
+        let b = make_f32(
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+            vec![2, 1, 4],
+        );
+        let out: Tensor<Float32Type> = broadcast_binary_op(&a, &b, |x, y| x + y, "add").unwrap();
         assert_eq!(out.shape().unwrap(), &[2, 3, 4]);
         let data = out.data().typed_data::<f32>();
         // batch 0: b=[10,20,30,40]
         assert_eq!(&data[0..4], &[11.0, 21.0, 31.0, 41.0]); // a=1
         assert_eq!(&data[4..8], &[12.0, 22.0, 32.0, 42.0]); // a=2
         assert_eq!(&data[8..12], &[13.0, 23.0, 33.0, 43.0]); // a=3
-        // batch 1: b=[50,60,70,80]
+                                                             // batch 1: b=[50,60,70,80]
         assert_eq!(&data[12..16], &[51.0, 61.0, 71.0, 81.0]);
         assert_eq!(&data[16..20], &[52.0, 62.0, 72.0, 82.0]);
         assert_eq!(&data[20..24], &[53.0, 63.0, 73.0, 83.0]);
@@ -279,13 +277,8 @@ mod tests {
         // Comparison: f32 x f32 -> u8
         let a = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
         let b = make_f32(vec![2.0, 2.0, 2.0], vec![3]);
-        let out: Tensor<UInt8Type> = broadcast_binary_op(
-            &a,
-            &b,
-            |x, y| if x > y { 1u8 } else { 0u8 },
-            "greater",
-        )
-        .unwrap();
+        let out: Tensor<UInt8Type> =
+            broadcast_binary_op(&a, &b, |x, y| if x > y { 1u8 } else { 0u8 }, "greater").unwrap();
         assert_eq!(out.data().typed_data::<u8>(), &[0, 0, 1]);
     }
 }

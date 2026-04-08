@@ -47,8 +47,7 @@ where
         // Return a shape [ndim, 1] tensor filled with -1 as sentinel for "no nonzero elements".
         let sentinel = vec![-1i64; ndim];
         let buf = Buffer::from_vec(sentinel);
-        return Tensor::new_row_major(buf, Some(vec![ndim, 1]), None)
-            .map_err(KernelError::from);
+        return Tensor::new_row_major(buf, Some(vec![ndim, 1]), None).map_err(KernelError::from);
     }
 
     // Output shape: (ndim, num_nonzero) — row-major means we lay out dim0 coords, then dim1 coords, etc.
