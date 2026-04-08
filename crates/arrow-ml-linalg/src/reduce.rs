@@ -165,6 +165,10 @@ fn simd_prod_f64(vals: &[f64]) -> f64 {
 // scalar based on `use_simd`.
 // ---------------------------------------------------------------------------
 
+/// Applies one reduce operation to a `f32` slice, choosing the SIMD or scalar
+/// path based on `use_simd`.
+///
+/// `use_simd` should be `true` when `vals.len() >= SIMD_THRESHOLD`.
 #[inline]
 fn apply_f32(vals: &[f32], op: ReduceOp, use_simd: bool) -> f32 {
     if use_simd {
@@ -192,6 +196,10 @@ fn apply_f32(vals: &[f32], op: ReduceOp, use_simd: bool) -> f32 {
     }
 }
 
+/// Applies one reduce operation to a `f64` slice, choosing the SIMD or scalar
+/// path based on `use_simd`.
+///
+/// `use_simd` should be `true` when `vals.len() >= SIMD_THRESHOLD`.
 #[inline]
 fn apply_f64(vals: &[f64], op: ReduceOp, use_simd: bool) -> f64 {
     if use_simd {
@@ -227,6 +235,13 @@ fn apply_f64(vals: &[f64], op: ReduceOp, use_simd: bool) -> f64 {
 // non-contiguous case we still gather into a temporary buffer.
 // ---------------------------------------------------------------------------
 
+/// Reduce `data` (shaped by `shape`) along `axis` using a typed f32 kernel.
+///
+/// When `inner_size == 1` the data for each output element is contiguous so
+/// the reduction function receives a direct slice with no intermediate copy.
+/// Otherwise elements are gathered into a reusable temporary buffer.
+///
+/// Returns `(output_data, new_shape)`.
 fn reduce_single_axis_f32(
     data: &[f32],
     shape: &[usize],
@@ -275,6 +290,13 @@ fn reduce_single_axis_f32(
     (out, new_shape)
 }
 
+/// Reduce `data` (shaped by `shape`) along `axis` using a typed f64 kernel.
+///
+/// When `inner_size == 1` the data for each output element is contiguous so
+/// the reduction function receives a direct slice with no intermediate copy.
+/// Otherwise elements are gathered into a reusable temporary buffer.
+///
+/// Returns `(output_data, new_shape)`.
 fn reduce_single_axis_f64(
     data: &[f64],
     shape: &[usize],
@@ -328,6 +350,15 @@ fn reduce_single_axis_f64(
 // (data, shape) pair ready to be wrapped into a Buffer/Tensor.
 // ---------------------------------------------------------------------------
 
+/// Shared shape-management pipeline for the typed (f32 / f64) SIMD path.
+///
+/// Handles axis normalisation, multi-axis reduction (one axis at a time, high
+/// to low so indices stay valid), and the `keepdims` shape rebuild.
+///
+/// `single_axis` is called once per axis being reduced; it receives the
+/// current `(data, shape, axis)` and must return the updated `(data, shape)`.
+///
+/// Returns `(final_data, final_shape)` ready to be wrapped into a `Buffer`.
 fn reduce_typed<N, F>(
     data: &[N],
     shape: &[usize],
