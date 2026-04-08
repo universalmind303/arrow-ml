@@ -164,7 +164,7 @@ where
 
                 // Start with bias if present
                 let bias_val = match bias_vals {
-                    Some(ref bv) => bv[oc],
+                    Some(bv) => bv[oc],
                     None => zero,
                 };
 
@@ -220,6 +220,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
     use arrow::array::Float32Array;
@@ -228,7 +229,7 @@ mod tests {
 
     /// Helper: create an N-dimensional f32 tensor from flat data + shape.
     fn make_f32_tensor(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

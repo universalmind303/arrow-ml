@@ -43,7 +43,7 @@ mod tests {
     use arrow::buffer::ScalarBuffer;
 
     fn make_u8(data: Vec<u8>, shape: Vec<usize>) -> Tensor<'static, UInt8Type> {
-        let buffer = Buffer::from(ScalarBuffer::<u8>::from(data).into_inner());
+        let buffer = ScalarBuffer::<u8>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

@@ -11,6 +11,7 @@ unsafe impl<T> Send for RawMutPtr<T> {}
 unsafe impl<T> Sync for RawMutPtr<T> {}
 
 impl<T> RawMutPtr<T> {
+    #[allow(clippy::wrong_self_convention)]
     fn as_ptr(self) -> *mut T {
         self.0
     }
@@ -34,6 +35,8 @@ const NC: usize = 4096;
 /// `c`: pointer to the (ir, jr) corner of the output matrix, row-major with stride `ldc`
 /// `first`: if true, overwrite C; if false, accumulate into C
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 unsafe fn microkernel(
     packed_a: &[f32],
     packed_b: &[f32],
@@ -127,6 +130,7 @@ unsafe fn microkernel(
 /// Macro-kernel: processes one MC×NC tile of C, given packed A and shared packed B.
 ///
 /// SAFETY: all packed buffer offsets and c_slice indexing must be in-bounds.
+#[allow(clippy::too_many_arguments)]
 unsafe fn macrokernel(
     packed_a: &[f32],
     packed_b: &[f32],
@@ -171,12 +175,12 @@ pub fn gemm(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     let mut c = vec![0.0f32; m * n];
 
     // Pre-allocate packed B buffer (reused across iterations)
-    let packed_b_len = KC * ((NC + NR - 1) / NR * NR);
+    let packed_b_len = KC * (NC.div_ceil(NR) * NR);
     let mut packed_b = Vec::<f32>::with_capacity(packed_b_len);
     unsafe { packed_b.set_len(packed_b_len) };
 
     // Max packed A size per thread
-    let packed_a_len = ((MC + MR - 1) / MR * MR) * KC;
+    let packed_a_len = (MC.div_ceil(MR) * MR) * KC;
 
     for jc in (0..n).step_by(NC) {
         let nc = NC.min(n - jc);

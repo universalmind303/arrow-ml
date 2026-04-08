@@ -101,7 +101,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

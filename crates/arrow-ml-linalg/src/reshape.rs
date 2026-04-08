@@ -186,7 +186,7 @@ fn resolve_shape(new_shape: &[i64], total: usize) -> Result<Vec<usize>> {
     let mut resolved: Vec<usize> = new_shape.iter().map(|&d| d as usize).collect();
 
     if let Some(idx) = neg_idx {
-        if product == 0 || total % product != 0 {
+        if product == 0 || !total.is_multiple_of(product) {
             return Err(KernelError::ShapeMismatch {
                 operation: "reshape",
                 expected: format!("total elements {total} divisible by {product}"),
@@ -218,7 +218,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

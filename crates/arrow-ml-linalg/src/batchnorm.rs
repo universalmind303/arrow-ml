@@ -82,6 +82,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
     use arrow::array::Float32Array;
@@ -95,7 +96,7 @@ mod tests {
         h: usize,
         w: usize,
     ) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(vec![n, c, h, w]), None).unwrap()
     }
 
@@ -156,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_wrong_dimensionality() {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(vec![1.0, 2.0]).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(vec![1.0, 2.0]).into_inner();
         let input: Tensor<'_, Float32Type> =
             Tensor::new_row_major(buffer, Some(vec![1, 2]), None).unwrap();
         let scale = Float32Array::from(vec![1.0]);

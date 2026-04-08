@@ -9,6 +9,7 @@ unsafe impl<T> Send for RawMutPtr<T> {}
 unsafe impl<T> Sync for RawMutPtr<T> {}
 
 impl<T> RawMutPtr<T> {
+    #[allow(clippy::wrong_self_convention)]
     fn as_ptr(self) -> *mut T {
         self.0
     }
@@ -27,6 +28,8 @@ const NC: usize = 2048;
 
 /// 4x8 micro-kernel for f64: computes a MR x NR block of C accumulated over `kc` depth.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 unsafe fn microkernel(
     packed_a: &[f64],
     packed_b: &[f64],
@@ -111,6 +114,7 @@ unsafe fn microkernel(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn macrokernel(
     packed_a: &[f64],
     packed_b: &[f64],
@@ -152,11 +156,11 @@ pub fn gemm(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
 
     let mut c = vec![0.0f64; m * n];
 
-    let packed_b_len = KC * ((NC + NR - 1) / NR * NR);
+    let packed_b_len = KC * (NC.div_ceil(NR) * NR);
     let mut packed_b = Vec::<f64>::with_capacity(packed_b_len);
     unsafe { packed_b.set_len(packed_b_len) };
 
-    let packed_a_len = ((MC + MR - 1) / MR * MR) * KC;
+    let packed_a_len = (MC.div_ceil(MR) * MR) * KC;
 
     for jc in (0..n).step_by(NC) {
         let nc = NC.min(n - jc);

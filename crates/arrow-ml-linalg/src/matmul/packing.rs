@@ -4,6 +4,7 @@
 /// Each micro-panel is stored as `[kc][mr]` — for each k-step,
 /// `mr` consecutive values from the same column of the micro-panel.
 /// Zero-pads if fewer than `mr` rows remain.
+#[allow(clippy::too_many_arguments)]
 pub fn pack_a<T: Copy + Default>(
     a: &[T],
     lda: usize, // row stride of A (= k, the number of columns)
@@ -60,6 +61,7 @@ pub fn pack_a<T: Copy + Default>(
 /// Each micro-panel is stored as `[kc][nr]` — for each k-step,
 /// `nr` consecutive values from the same row of the micro-panel.
 /// Zero-pads if fewer than `nr` columns remain.
+#[allow(clippy::too_many_arguments)]
 pub fn pack_b<T: Copy + Default>(
     b: &[T],
     ldb: usize, // row stride of B (= n, the number of columns)

@@ -14,7 +14,7 @@ use num_traits::{Float, Zero};
 ///
 /// * `input`          - 4D tensor in NCHW layout: (batch, in_channels, height, width)
 /// * `weight`         - 4D tensor: (in_channels, out_channels/groups, kernel_h, kernel_w)
-///                      NOTE: transposed relative to conv2d weights
+///   NOTE: transposed relative to conv2d weights
 /// * `bias`           - Optional 1D bias array of length `out_channels`
 /// * `padding`        - `[pad_h, pad_w]` — padding subtracted from the output spatial dims
 /// * `output_padding` - `[opad_h, opad_w]` — extra size added to one side of the output
@@ -32,6 +32,7 @@ use num_traits::{Float, Zero};
 /// # Returns
 ///
 /// 4D tensor in NCHW layout: (batch, out_channels, out_h, out_w)
+#[allow(clippy::too_many_arguments)]
 pub fn conv_transpose2d<T>(
     input: &Tensor<'_, T>,
     weight: &Tensor<'_, T>,
@@ -125,7 +126,7 @@ where
     let out_len = batch * out_channels * out_h * out_w;
     let mut out = vec![T::Native::zero(); out_len];
 
-    if let Some(ref bv) = bias_vals {
+    if let Some(bv) = bias_vals {
         for n in 0..batch {
             for oc in 0..out_channels {
                 let base = n * out_channels * out_h * out_w + oc * out_h * out_w;
@@ -196,7 +197,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

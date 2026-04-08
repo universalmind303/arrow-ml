@@ -66,6 +66,7 @@ where
 
     // For each index element, compute its coordinates, insert the one-hot dim
     let mut idx_coords = vec![0usize; idx_ndim];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..idx_total {
         let mut hot_idx = idx_data[i];
         if hot_idx < 0 {
@@ -75,6 +76,7 @@ where
             // Build output coordinate: insert hot_idx at axis position
             let mut out_flat = 0;
             let mut src_d = 0;
+            #[allow(clippy::needless_range_loop)]
             for d in 0..out_ndim {
                 if d == axis {
                     out_flat += hot_idx as usize * out_strides[d];
@@ -107,7 +109,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_i64(data: Vec<i64>, shape: Vec<usize>) -> Tensor<'static, Int64Type> {
-        let buffer = Buffer::from(ScalarBuffer::<i64>::from(data).into_inner());
+        let buffer = ScalarBuffer::<i64>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 

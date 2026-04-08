@@ -16,7 +16,7 @@ fn make_f64_tensor(rows: usize, cols: usize) -> Tensor<'static, Float64Type> {
     let data: Vec<f64> = (0..rows * cols)
         .map(|i| ((i % 100) as f64) * 0.01)
         .collect();
-    let buffer = Buffer::from(ScalarBuffer::<f64>::from(data).into_inner());
+    let buffer = ScalarBuffer::<f64>::from(data).into_inner();
     Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
 }
 

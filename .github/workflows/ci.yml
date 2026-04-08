@@ -30,7 +30,7 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   check:
     name: Check
@@ -40,6 +40,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Run cargo check
         run: cargo check --workspace --all-targets --all-features
+        env:
+          RUSTFLAGS: "-D warnings"
 
   test:
     name: Test
@@ -49,3 +51,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Run tests
         run: cargo test --workspace --all-features
+        env:
+          RUSTFLAGS: "-D warnings"

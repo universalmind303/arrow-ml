@@ -57,7 +57,7 @@ fn main() {
     println!("Input: 1x1x8x8 grayscale image (values 0..1)");
 
     // --- Conv2D: 1 input channel -> 4 output channels, 3x3 kernel ---
-    let conv_weight_data: Vec<f32> = (0..4 * 1 * 3 * 3)
+    let conv_weight_data: Vec<f32> = (0..4 * 3 * 3)
         .map(|i| ((i as f32 * 0.1) - 0.5).sin() * 0.3)
         .collect();
     let conv_weight = make_tensor(conv_weight_data, vec![4, 1, 3, 3]);

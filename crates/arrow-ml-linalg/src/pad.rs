@@ -43,6 +43,7 @@ where
     let out_strides = row_major_strides(&out_shape);
 
     let mut nd_index = vec![0usize; ndims];
+    #[allow(clippy::needless_range_loop)]
     for flat_in in 0..in_len {
         flat_to_nd(flat_in, &in_strides, &mut nd_index);
 
@@ -81,7 +82,7 @@ mod tests {
     use arrow::datatypes::Float32Type;
 
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
+        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
     }
 
