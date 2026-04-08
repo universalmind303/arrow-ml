@@ -11,7 +11,7 @@ homepage.workspace = true
 readme.workspace = true
 
 [dependencies]
-arrow = { workspace = true }
+arrow = { workspace = true, features = ["ffi"] }
 num-traits = { workspace = true }
 libloading = { workspace = true }
 glob = { workspace = true }
