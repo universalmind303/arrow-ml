@@ -160,6 +160,7 @@ dependencies = [
  "arrow",
  "arrow-ml-common",
  "criterion",
+ "half",
  "num-traits",
 ]
 

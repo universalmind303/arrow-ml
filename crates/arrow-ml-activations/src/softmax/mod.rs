@@ -1,3 +1,4 @@
+mod kernel_f16;
 mod kernel_naive;
 mod kernel_simd;
 
@@ -7,6 +8,7 @@ use arrow::datatypes::DataType;
 use arrow::tensor::Tensor;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
+use half::f16;
 use num_traits::{Float, Zero};
 use std::ops::AddAssign;
 
@@ -18,8 +20,10 @@ const SIMD_THRESHOLD: usize = 1024;
 /// Uses the max-subtraction trick for numerical stability.
 /// Returns an error if the array contains null values or is empty.
 ///
-/// For f32/f64 arrays >= SIMD_THRESHOLD elements, uses optimized SIMD kernels.
-/// Otherwise falls back to naive scalar implementation.
+/// Supports Float16, Float32, and Float64 with optimized kernels:
+/// - Float16: native kernel (computed via f32)
+/// - Float32/Float64: SIMD kernels for arrays >= SIMD_THRESHOLD elements
+/// - Other float types: generic fallback implementation
 pub fn softmax<T>(array: &PrimitiveArray<T>) -> Result<PrimitiveArray<T>>
 where
     T: ArrowPrimitiveType,
@@ -41,6 +45,17 @@ where
 
     // Dispatch based on type and size
     let result_buf = match T::DATA_TYPE {
+        DataType::Float16 => {
+            // SAFETY: T::DATA_TYPE == Float16 guarantees T::Native == f16
+            let input: &[f16] = unsafe {
+                std::slice::from_raw_parts(values.as_ptr() as *const f16, n)
+            };
+            let mut output = vec![f16::ZERO; n];
+
+            kernel_f16::softmax_f16(input, &mut output);
+
+            Buffer::from_vec(output)
+        }
         DataType::Float32 => {
             // SAFETY: T::DATA_TYPE == Float32 guarantees T::Native == f32
             let input: &[f32] = unsafe {
@@ -104,7 +119,10 @@ where
 ///
 /// Supports negative axis values (e.g., -1 means last axis).
 ///
-/// For f32/f64 tensors with axis dimension >= SIMD_THRESHOLD, uses optimized SIMD kernels.
+/// Supports Float16, Float32, and Float64 with optimized kernels:
+/// - Float16: native kernel (computed via f32)
+/// - Float32/Float64: SIMD kernels for axis dimension >= SIMD_THRESHOLD
+/// - Other float types: generic fallback implementation
 pub fn softmax_tensor<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
@@ -140,6 +158,32 @@ where
 
     // Dispatch based on type and dimension size
     match T::DATA_TYPE {
+        DataType::Float16 => {
+            // f16 path
+            let data_f16: &[f16] = unsafe { std::mem::transmute(data) };
+            let out_f16: &mut [f16] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+
+            for o in 0..outer_size {
+                for i in 0..inner_size {
+                    // Extract slice along axis dimension
+                    let mut slice_data = Vec::with_capacity(dim_size);
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        slice_data.push(data_f16[idx]);
+                    }
+
+                    // Compute softmax on this slice
+                    let mut slice_out = vec![f16::ZERO; dim_size];
+                    kernel_f16::softmax_f16(&slice_data, &mut slice_out);
+
+                    // Write back
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        out_f16[idx] = slice_out[d];
+                    }
+                }
+            }
+        }
         DataType::Float32 if dim_size >= SIMD_THRESHOLD => {
             // SIMD path for f32
             let data_f32: &[f32] = unsafe { std::mem::transmute(data) };
@@ -229,9 +273,31 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Float32Array;
+    use arrow::array::{Float16Array, Float32Array};
     use arrow::buffer::ScalarBuffer;
-    use arrow::datatypes::Float32Type;
+    use arrow::datatypes::{Float16Type, Float32Type};
+
+    #[test]
+    fn test_softmax_f16() {
+        // Test Float16 support
+        let input_values = vec![
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0),
+        ];
+        let input = Float16Array::from(input_values);
+        let output = softmax(&input).unwrap();
+
+        // Check sum to 1
+        let sum: f32 = output.values().iter().map(|&x| x.to_f32()).sum();
+        assert!((sum - 1.0).abs() < 1e-3, "Sum is {}", sum);
+
+        // Check ordering
+        assert!(output.value(3) > output.value(2));
+        assert!(output.value(2) > output.value(1));
+        assert!(output.value(1) > output.value(0));
+    }
 
     #[test]
     fn test_softmax_uniform() {
@@ -300,6 +366,35 @@ mod tests {
     fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
         let buffer = Buffer::from(ScalarBuffer::<f32>::from(data).into_inner());
         Tensor::new_row_major(buffer, Some(shape), None).unwrap()
+    }
+
+    fn make_f16(data: Vec<f16>, shape: Vec<usize>) -> Tensor<'static, Float16Type> {
+        let buffer = Buffer::from_vec(data);
+        Tensor::new_row_major(buffer, Some(shape), None).unwrap()
+    }
+
+    #[test]
+    fn test_softmax_tensor_f16() {
+        // Test Float16 tensor support
+        let input = make_f16(
+            vec![
+                f16::from_f32(1.0),
+                f16::from_f32(2.0),
+                f16::from_f32(3.0),
+                f16::from_f32(4.0),
+                f16::from_f32(5.0),
+                f16::from_f32(6.0),
+            ],
+            vec![2, 3],
+        );
+        let out = softmax_tensor::<Float16Type>(&input, 1).unwrap();
+        assert_eq!(out.shape().unwrap(), &vec![2, 3]);
+        let data = out.data().typed_data::<f16>();
+        // Each row should sum to 1
+        let row0_sum: f32 = data[0..3].iter().map(|&x| x.to_f32()).sum();
+        let row1_sum: f32 = data[3..6].iter().map(|&x| x.to_f32()).sum();
+        assert!((row0_sum - 1.0).abs() < 1e-3);
+        assert!((row1_sum - 1.0).abs() < 1e-3);
     }
 
     #[test]
