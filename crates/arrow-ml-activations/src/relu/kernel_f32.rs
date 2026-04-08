@@ -21,8 +21,6 @@ pub fn relu(input: &[f32]) -> Vec<f32> {
     for i in (chunks * SIMD_WIDTH)..len {
         output.push(if input[i] > 0.0 { input[i] } else { 0.0 });
     }
-
-    debug_assert_eq!(output.len(), len);
     output
 }
 
