@@ -14,3 +14,30 @@ readme.workspace = true
 arrow-ml-common = { path = "../arrow-ml-common", version = "0.1.0" }
 arrow = { workspace = true }
 num-traits = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "relu_bench"
+harness = false
+
+[[bench]]
+name = "sigmoid_bench"
+harness = false
+
+[[bench]]
+name = "tanh_bench"
+harness = false
+
+[[bench]]
+name = "gelu_bench"
+harness = false
+
+[[bench]]
+name = "silu_bench"
+harness = false
+
+[[bench]]
+name = "softmax_bench"
+harness = false

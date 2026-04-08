@@ -1,10 +1,17 @@
+mod kernel_f32;
+mod kernel_f64;
+
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
-use arrow::buffer::Buffer;
+use arrow::buffer::{Buffer, ScalarBuffer};
+use arrow::datatypes::DataType;
 use arrow::tensor::Tensor;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
 use num_traits::{Float, Zero};
 use std::ops::AddAssign;
+
+/// Minimum number of elements to use SIMD path.
+const SIMD_THRESHOLD: usize = 1024;
 
 /// Softmax over all elements: softmax(x_i) = exp(x_i - max) / sum(exp(x_j - max)).
 ///
@@ -24,6 +31,12 @@ where
         return Err(KernelError::EmptyArray {
             operation: "softmax",
         });
+    }
+
+    if array.len() >= SIMD_THRESHOLD {
+        if let Some(result) = try_simd_softmax(array) {
+            return Ok(result);
+        }
     }
 
     let values = array.values();
@@ -48,6 +61,41 @@ where
     // Normalize
     let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
     Ok(PrimitiveArray::from_iter_values(result))
+}
+
+fn try_simd_softmax<T>(array: &PrimitiveArray<T>) -> Option<PrimitiveArray<T>>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Float + AddAssign,
+{
+    let values = array.values();
+    let len = values.len();
+
+    match T::DATA_TYPE {
+        DataType::Float32 => {
+            let input =
+                unsafe { std::slice::from_raw_parts(values.as_ptr() as *const f32, len) };
+            let result = kernel_f32::softmax(input);
+            let buffer = Buffer::from_vec(result);
+            let scalar_buffer = ScalarBuffer::<f32>::new(buffer, 0, len);
+            Some(PrimitiveArray::new(
+                unsafe { std::mem::transmute(scalar_buffer) },
+                None,
+            ))
+        }
+        DataType::Float64 => {
+            let input =
+                unsafe { std::slice::from_raw_parts(values.as_ptr() as *const f64, len) };
+            let result = kernel_f64::softmax(input);
+            let buffer = Buffer::from_vec(result);
+            let scalar_buffer = ScalarBuffer::<f64>::new(buffer, 0, len);
+            Some(PrimitiveArray::new(
+                unsafe { std::mem::transmute(scalar_buffer) },
+                None,
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// Softmax over a specific axis of an N-D tensor.
@@ -176,6 +224,20 @@ mod tests {
     fn test_softmax_rejects_empty() {
         let input = Float32Array::from(Vec::<f32>::new());
         assert!(softmax(&input).is_err());
+    }
+
+    #[test]
+    fn test_softmax_simd_path_f32() {
+        let data: Vec<f32> = (0..2048).map(|i| (i as f32 - 1024.0) * 0.01).collect();
+        let input = Float32Array::from(data);
+        let output = softmax(&input).unwrap();
+        let sum: f32 = output.values().iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-3,
+            "softmax sum should be ~1.0, got {sum}"
+        );
+        // Check ordering: larger inputs have larger softmax
+        assert!(output.value(2047) > output.value(0));
     }
 
     // --- Tensor softmax tests ---

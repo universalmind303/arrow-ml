@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 pub mod gelu;
 pub mod relu;
 pub mod sigmoid;

@@ -1,5 +1,13 @@
-use arrow::array::{ArrowPrimitiveType, PrimitiveArray};
+mod kernel_f32;
+mod kernel_f64;
+
+use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
+use arrow::buffer::{Buffer, ScalarBuffer};
+use arrow::datatypes::DataType;
 use num_traits::{Float, One};
+
+/// Minimum number of elements to use SIMD path.
+const SIMD_THRESHOLD: usize = 1024;
 
 /// GeLU activation (tanh approximation).
 ///
@@ -11,9 +19,15 @@ where
     T: ArrowPrimitiveType,
     T::Native: Float,
 {
+    if array.len() >= SIMD_THRESHOLD && array.null_count() == 0 {
+        if let Some(result) = try_simd_gelu(array) {
+            return result;
+        }
+    }
+
     let half = <T::Native as num_traits::NumCast>::from(0.5).unwrap();
     let one = T::Native::one();
-    let sqrt_2_over_pi = <T::Native as num_traits::NumCast>::from(0.7978845608).unwrap(); // sqrt(2/π)
+    let sqrt_2_over_pi = <T::Native as num_traits::NumCast>::from(0.7978845608).unwrap();
     let coeff = <T::Native as num_traits::NumCast>::from(0.044715).unwrap();
 
     array.unary(|x| {
@@ -64,6 +78,41 @@ fn erf_positive<F: Float>(x: F) -> F {
     one - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * (-x * x).exp()
 }
 
+fn try_simd_gelu<T>(array: &PrimitiveArray<T>) -> Option<PrimitiveArray<T>>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Float,
+{
+    let values = array.values();
+    let len = values.len();
+
+    match T::DATA_TYPE {
+        DataType::Float32 => {
+            let input =
+                unsafe { std::slice::from_raw_parts(values.as_ptr() as *const f32, len) };
+            let result = kernel_f32::gelu(input);
+            let buffer = Buffer::from_vec(result);
+            let scalar_buffer = ScalarBuffer::<f32>::new(buffer, 0, len);
+            Some(PrimitiveArray::new(
+                unsafe { std::mem::transmute(scalar_buffer) },
+                None,
+            ))
+        }
+        DataType::Float64 => {
+            let input =
+                unsafe { std::slice::from_raw_parts(values.as_ptr() as *const f64, len) };
+            let result = kernel_f64::gelu(input);
+            let buffer = Buffer::from_vec(result);
+            let scalar_buffer = ScalarBuffer::<f64>::new(buffer, 0, len);
+            Some(PrimitiveArray::new(
+                unsafe { std::mem::transmute(scalar_buffer) },
+                None,
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +138,21 @@ mod tests {
         assert!((vals[1] - 0.0).abs() < 1e-6);
         assert!((vals[2] - 0.8413).abs() < 0.01);
         assert!((vals[3] - 1.9545).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_gelu_simd_path_f32() {
+        let data: Vec<f32> = (0..2048).map(|i| (i as f32 - 1024.0) * 0.005).collect();
+        let input = Float32Array::from(data.clone());
+        let output = gelu(&input);
+        for (i, &x) in data.iter().enumerate() {
+            let inner = 0.7978845608f32 * (x + 0.044715f32 * x * x * x);
+            let expected = 0.5 * x * (1.0 + inner.tanh());
+            let actual = output.value(i);
+            assert!(
+                (actual - expected).abs() < 1e-2,
+                "mismatch at index {i}: got {actual}, expected {expected}"
+            );
+        }
     }
 }
