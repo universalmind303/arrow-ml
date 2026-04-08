@@ -3,7 +3,7 @@ mod kernel_naive;
 mod kernel_simd;
 
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
-use arrow::buffer::Buffer;
+use arrow::buffer::{Buffer, ScalarBuffer};
 use arrow::datatypes::DataType;
 use arrow::tensor::Tensor;
 use arrow_ml_common::KernelError;
@@ -18,7 +18,8 @@ const SIMD_THRESHOLD: usize = 1024;
 /// Softmax over all elements: softmax(x_i) = exp(x_i - max) / sum(exp(x_j - max)).
 ///
 /// Uses the max-subtraction trick for numerical stability.
-/// Returns an error if the array contains null values or is empty.
+/// Empty arrays are returned as-is (no-op).
+/// Null values are propagated (output is null where input is null).
 ///
 /// Supports Float16, Float32, and Float64 with optimized kernels:
 /// - Float16: native kernel (computed via f32)
@@ -29,86 +30,173 @@ where
     T: ArrowPrimitiveType,
     T::Native: Float + AddAssign,
 {
-    if array.null_count() > 0 {
-        return Err(KernelError::NullsNotSupported {
-            operation: "softmax",
-        });
-    }
+    // Empty array is a no-op
     if array.is_empty() {
-        return Err(KernelError::EmptyArray {
-            operation: "softmax",
-        });
+        return Ok(array.clone());
     }
 
     let values = array.values();
     let n = values.len();
 
-    // Dispatch based on type and size
-    let result_buf = match T::DATA_TYPE {
-        DataType::Float16 => {
-            // SAFETY: T::DATA_TYPE == Float16 guarantees T::Native == f16
-            let input: &[f16] = unsafe {
-                std::slice::from_raw_parts(values.as_ptr() as *const f16, n)
-            };
-            let mut output = vec![f16::ZERO; n];
+    // If there are nulls, we need to compute softmax only on non-null values
+    let result_buf = if let Some(nulls) = array.nulls() {
+        // Collect non-null values
+        let non_null_values: Vec<T::Native> = array.iter()
+            .flatten()
+            .collect();
 
-            kernel_f16::softmax_f16(input, &mut output);
-
-            Buffer::from_vec(output)
+        if non_null_values.is_empty() {
+            // All nulls - return zeros
+            return Ok(PrimitiveArray::new(
+                Buffer::from_vec(vec![T::Native::zero(); n]).into(),
+                array.nulls().cloned()
+            ));
         }
-        DataType::Float32 => {
-            // SAFETY: T::DATA_TYPE == Float32 guarantees T::Native == f32
-            let input: &[f32] = unsafe {
-                std::slice::from_raw_parts(values.as_ptr() as *const f32, n)
-            };
-            let mut output = vec![0.0f32; n];
 
-            if n >= SIMD_THRESHOLD {
-                kernel_simd::softmax_f32(input, &mut output);
-            } else {
-                kernel_naive::softmax_f32(input, &mut output);
+        // Compute softmax on non-null values
+        let non_null_count = non_null_values.len();
+        let softmax_result = match T::DATA_TYPE {
+            DataType::Float16 => {
+                let buf = Buffer::from_vec(non_null_values);
+                let input: &[f16] = buf.typed_data();
+                let mut output = vec![f16::ZERO; non_null_count];
+                kernel_f16::softmax_f16(input, &mut output);
+                output.into_iter().map(|v| {
+                    // Convert f16 back to T::Native
+                    let f16_buf = Buffer::from_vec(vec![v]);
+                    let as_native: &[T::Native] = f16_buf.typed_data();
+                    as_native[0]
+                }).collect::<Vec<_>>()
             }
+            DataType::Float32 => {
+                let buf = Buffer::from_vec(non_null_values);
+                let input: &[f32] = buf.typed_data();
+                let mut output = vec![0.0f32; non_null_count];
 
-            Buffer::from_vec(output)
-        }
-        DataType::Float64 => {
-            // SAFETY: T::DATA_TYPE == Float64 guarantees T::Native == f64
-            let input: &[f64] = unsafe {
-                std::slice::from_raw_parts(values.as_ptr() as *const f64, n)
-            };
-            let mut output = vec![0.0f64; n];
+                if input.len() >= SIMD_THRESHOLD {
+                    kernel_simd::softmax_f32(input, &mut output);
+                } else {
+                    kernel_naive::softmax_f32(input, &mut output);
+                }
 
-            if n >= SIMD_THRESHOLD {
-                kernel_simd::softmax_f64(input, &mut output);
-            } else {
-                kernel_naive::softmax_f64(input, &mut output);
+                output.into_iter().map(|v| {
+                    let f32_buf = Buffer::from_vec(vec![v]);
+                    let as_native: &[T::Native] = f32_buf.typed_data();
+                    as_native[0]
+                }).collect::<Vec<_>>()
             }
+            DataType::Float64 => {
+                let buf = Buffer::from_vec(non_null_values);
+                let input: &[f64] = buf.typed_data();
+                let mut output = vec![0.0f64; non_null_count];
 
-            Buffer::from_vec(output)
+                if input.len() >= SIMD_THRESHOLD {
+                    kernel_simd::softmax_f64(input, &mut output);
+                } else {
+                    kernel_naive::softmax_f64(input, &mut output);
+                }
+
+                output.into_iter().map(|v| {
+                    let f64_buf = Buffer::from_vec(vec![v]);
+                    let as_native: &[T::Native] = f64_buf.typed_data();
+                    as_native[0]
+                }).collect::<Vec<_>>()
+            }
+            _ => {
+                // Generic fallback
+                let max_val = non_null_values
+                    .iter()
+                    .copied()
+                    .fold(T::Native::neg_infinity(), |a, b| a.max(b));
+
+                let mut sum = T::Native::zero();
+                let exp_vals: Vec<T::Native> = non_null_values
+                    .iter()
+                    .map(|&x| {
+                        let e = (x - max_val).exp();
+                        sum += e;
+                        e
+                    })
+                    .collect();
+
+                exp_vals.into_iter().map(|e| e / sum).collect()
+            }
+        };
+
+        // Map results back to original positions
+        let mut result = vec![T::Native::zero(); n];
+        let mut result_idx = 0;
+        for i in 0..n {
+            if nulls.is_valid(i) {
+                result[i] = softmax_result[result_idx];
+                result_idx += 1;
+            }
         }
-        _ => {
-            // Generic fallback for other float types
-            let max_val = values
-                .iter()
-                .copied()
-                .fold(T::Native::neg_infinity(), |a, b| a.max(b));
 
-            let mut sum = T::Native::zero();
-            let exp_vals: Vec<T::Native> = values
-                .iter()
-                .map(|&x| {
-                    let e = (x - max_val).exp();
-                    sum += e;
-                    e
-                })
-                .collect();
+        Buffer::from_vec(result)
+    } else {
+        // No nulls - compute softmax on all values
+        match T::DATA_TYPE {
+            DataType::Float16 => {
+                let buf = Buffer::from(values.inner().clone());
+                let input: &[f16] = buf.typed_data();
+                let mut output = vec![f16::ZERO; n];
 
-            let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
-            Buffer::from_vec(result)
+                kernel_f16::softmax_f16(input, &mut output);
+
+                Buffer::from_vec(output)
+            }
+            DataType::Float32 => {
+                let buf = Buffer::from(values.inner().clone());
+                let input: &[f32] = buf.typed_data();
+                let mut output = vec![0.0f32; n];
+
+                if n >= SIMD_THRESHOLD {
+                    kernel_simd::softmax_f32(input, &mut output);
+                } else {
+                    kernel_naive::softmax_f32(input, &mut output);
+                }
+
+                Buffer::from_vec(output)
+            }
+            DataType::Float64 => {
+                let buf = Buffer::from(values.inner().clone());
+                let input: &[f64] = buf.typed_data();
+                let mut output = vec![0.0f64; n];
+
+                if n >= SIMD_THRESHOLD {
+                    kernel_simd::softmax_f64(input, &mut output);
+                } else {
+                    kernel_naive::softmax_f64(input, &mut output);
+                }
+
+                Buffer::from_vec(output)
+            }
+            _ => {
+                // Generic fallback for other float types
+                let max_val = values
+                    .iter()
+                    .copied()
+                    .fold(T::Native::neg_infinity(), |a, b| a.max(b));
+
+                let mut sum = T::Native::zero();
+                let exp_vals: Vec<T::Native> = values
+                    .iter()
+                    .map(|&x| {
+                        let e = (x - max_val).exp();
+                        sum += e;
+                        e
+                    })
+                    .collect();
+
+                let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
+                Buffer::from_vec(result)
+            }
         }
     };
 
-    Ok(PrimitiveArray::new(result_buf.into(), None))
+    // Preserve null mask from input array
+    Ok(PrimitiveArray::new(result_buf.into(), array.nulls().cloned()))
 }
 
 /// Softmax over a specific axis of an N-D tensor.
@@ -159,9 +247,13 @@ where
     // Dispatch based on type and dimension size
     match T::DATA_TYPE {
         DataType::Float16 => {
-            // f16 path
-            let data_f16: &[f16] = unsafe { std::mem::transmute(data) };
-            let out_f16: &mut [f16] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+            // f16 path - work with ScalarBuffer for type safety
+            let scalar_buf = ScalarBuffer::<f16>::from(
+                input.data().typed_data::<f16>().to_vec()
+            );
+            let data_f16 = scalar_buf.as_ref();
+
+            let mut out_vec: Vec<f16> = data_f16.to_vec();
 
             for o in 0..outer_size {
                 for i in 0..inner_size {
@@ -179,15 +271,24 @@ where
                     // Write back
                     for d in 0..dim_size {
                         let idx = o * dim_size * inner_size + d * inner_size + i;
-                        out_f16[idx] = slice_out[d];
+                        out_vec[idx] = slice_out[d];
                     }
                 }
             }
+
+            // Convert back to T::Native
+            let out_scalar = ScalarBuffer::<f16>::from(out_vec);
+            let out_buf = Buffer::from(out_scalar.into_inner());
+            out = out_buf.typed_data::<T::Native>().to_vec();
         }
         DataType::Float32 if dim_size >= SIMD_THRESHOLD => {
-            // SIMD path for f32
-            let data_f32: &[f32] = unsafe { std::mem::transmute(data) };
-            let out_f32: &mut [f32] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+            // SIMD path for f32 - work with ScalarBuffer
+            let scalar_buf = ScalarBuffer::<f32>::from(
+                input.data().typed_data::<f32>().to_vec()
+            );
+            let data_f32 = scalar_buf.as_ref();
+
+            let mut out_vec: Vec<f32> = data_f32.to_vec();
 
             for o in 0..outer_size {
                 for i in 0..inner_size {
@@ -205,15 +306,24 @@ where
                     // Write back
                     for d in 0..dim_size {
                         let idx = o * dim_size * inner_size + d * inner_size + i;
-                        out_f32[idx] = slice_out[d];
+                        out_vec[idx] = slice_out[d];
                     }
                 }
             }
+
+            // Convert back to T::Native
+            let out_scalar = ScalarBuffer::<f32>::from(out_vec);
+            let out_buf = Buffer::from(out_scalar.into_inner());
+            out = out_buf.typed_data::<T::Native>().to_vec();
         }
         DataType::Float64 if dim_size >= SIMD_THRESHOLD => {
-            // SIMD path for f64
-            let data_f64: &[f64] = unsafe { std::mem::transmute(data) };
-            let out_f64: &mut [f64] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+            // SIMD path for f64 - work with ScalarBuffer
+            let scalar_buf = ScalarBuffer::<f64>::from(
+                input.data().typed_data::<f64>().to_vec()
+            );
+            let data_f64 = scalar_buf.as_ref();
+
+            let mut out_vec: Vec<f64> = data_f64.to_vec();
 
             for o in 0..outer_size {
                 for i in 0..inner_size {
@@ -231,10 +341,15 @@ where
                     // Write back
                     for d in 0..dim_size {
                         let idx = o * dim_size * inner_size + d * inner_size + i;
-                        out_f64[idx] = slice_out[d];
+                        out_vec[idx] = slice_out[d];
                     }
                 }
             }
+
+            // Convert back to T::Native
+            let out_scalar = ScalarBuffer::<f64>::from(out_vec);
+            let out_buf = Buffer::from(out_scalar.into_inner());
+            out = out_buf.typed_data::<T::Native>().to_vec();
         }
         _ => {
             // Naive path for all other cases
@@ -339,15 +454,27 @@ mod tests {
     }
 
     #[test]
-    fn test_softmax_rejects_nulls() {
+    fn test_softmax_with_nulls() {
+        // Null values should be propagated
         let input = Float32Array::from(vec![Some(1.0_f32), None, Some(3.0)]);
-        assert!(softmax(&input).is_err());
+        let output = softmax(&input).unwrap();
+
+        // Check that null is propagated
+        assert!(!output.is_null(0));
+        assert!(output.is_null(1));
+        assert!(!output.is_null(2));
+
+        // Check that non-null values sum to 1
+        let sum: f32 = output.iter().flatten().sum();
+        assert!((sum - 1.0).abs() < 1e-6, "Sum is {}", sum);
     }
 
     #[test]
-    fn test_softmax_rejects_empty() {
+    fn test_softmax_empty() {
+        // Empty array should be a no-op
         let input = Float32Array::from(Vec::<f32>::new());
-        assert!(softmax(&input).is_err());
+        let output = softmax(&input).unwrap();
+        assert_eq!(output.len(), 0);
     }
 
     #[test]
