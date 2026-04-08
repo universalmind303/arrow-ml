@@ -18,7 +18,6 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"
-codspeed-criterion-compat = "2.6"
 
 [[bench]]
 name = "matmul_bench"

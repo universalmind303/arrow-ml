@@ -8,17 +8,10 @@ on:
 
 jobs:
   benchmarks:
-    name: Run benchmarks with CodSpeed
+    name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-
-      - name: Build benchmarks
-        run: cargo bench --no-run
-
-      - name: Run benchmarks with CodSpeed
-        uses: CodSpeedHQ/action@v3
-        with:
-          run: cargo bench --bench matmul_bench
-          token: ${{ secrets.CODSPEED_TOKEN }}
+      - name: Run benchmarks
+        run: cargo bench

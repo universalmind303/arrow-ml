@@ -2,7 +2,7 @@ use arrow::buffer::{Buffer, ScalarBuffer};
 use arrow::datatypes::{Float32Type, Float64Type};
 use arrow::tensor::Tensor;
 use arrow_ml_linalg::matmul::matmul;
-use codspeed_criterion_compat::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 fn make_f32_tensor(rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
     let data: Vec<f32> = (0..rows * cols)
