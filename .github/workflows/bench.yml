@@ -1,0 +1,26 @@
+name: Benchmarks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install CodSpeed
+        uses: CodSpeedHQ/action@v3
+        with:
+          token: ${{ secrets.CODSPEED_TOKEN }}
+
+      - name: Run benchmarks
+        run: cargo codspeed build
+
+      - name: Run CodSpeed benchmarks
+        run: cargo codspeed run
