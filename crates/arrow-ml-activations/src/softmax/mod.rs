@@ -1,15 +1,25 @@
+mod kernel_naive;
+mod kernel_simd;
+
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use arrow::buffer::Buffer;
+use arrow::datatypes::DataType;
 use arrow::tensor::Tensor;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
 use num_traits::{Float, Zero};
 use std::ops::AddAssign;
 
+/// Minimum array size to use SIMD path (below this, SIMD overhead dominates).
+const SIMD_THRESHOLD: usize = 1024;
+
 /// Softmax over all elements: softmax(x_i) = exp(x_i - max) / sum(exp(x_j - max)).
 ///
 /// Uses the max-subtraction trick for numerical stability.
 /// Returns an error if the array contains null values or is empty.
+///
+/// For f32/f64 arrays >= SIMD_THRESHOLD elements, uses optimized SIMD kernels.
+/// Otherwise falls back to naive scalar implementation.
 pub fn softmax<T>(array: &PrimitiveArray<T>) -> Result<PrimitiveArray<T>>
 where
     T: ArrowPrimitiveType,
@@ -27,27 +37,63 @@ where
     }
 
     let values = array.values();
+    let n = values.len();
 
-    // Find max for numerical stability
-    let max_val = values
-        .iter()
-        .copied()
-        .fold(T::Native::neg_infinity(), |a, b| a.max(b));
+    // Dispatch based on type and size
+    let result_buf = match T::DATA_TYPE {
+        DataType::Float32 => {
+            // SAFETY: T::DATA_TYPE == Float32 guarantees T::Native == f32
+            let input: &[f32] = unsafe {
+                std::slice::from_raw_parts(values.as_ptr() as *const f32, n)
+            };
+            let mut output = vec![0.0f32; n];
 
-    // Compute exp(x - max) and running sum
-    let mut sum = T::Native::zero();
-    let exp_vals: Vec<T::Native> = values
-        .iter()
-        .map(|&x| {
-            let e = (x - max_val).exp();
-            sum += e;
-            e
-        })
-        .collect();
+            if n >= SIMD_THRESHOLD {
+                kernel_simd::softmax_f32(input, &mut output);
+            } else {
+                kernel_naive::softmax_f32(input, &mut output);
+            }
 
-    // Normalize
-    let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
-    Ok(PrimitiveArray::from_iter_values(result))
+            Buffer::from_vec(output)
+        }
+        DataType::Float64 => {
+            // SAFETY: T::DATA_TYPE == Float64 guarantees T::Native == f64
+            let input: &[f64] = unsafe {
+                std::slice::from_raw_parts(values.as_ptr() as *const f64, n)
+            };
+            let mut output = vec![0.0f64; n];
+
+            if n >= SIMD_THRESHOLD {
+                kernel_simd::softmax_f64(input, &mut output);
+            } else {
+                kernel_naive::softmax_f64(input, &mut output);
+            }
+
+            Buffer::from_vec(output)
+        }
+        _ => {
+            // Generic fallback for other float types
+            let max_val = values
+                .iter()
+                .copied()
+                .fold(T::Native::neg_infinity(), |a, b| a.max(b));
+
+            let mut sum = T::Native::zero();
+            let exp_vals: Vec<T::Native> = values
+                .iter()
+                .map(|&x| {
+                    let e = (x - max_val).exp();
+                    sum += e;
+                    e
+                })
+                .collect();
+
+            let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
+            Buffer::from_vec(result)
+        }
+    };
+
+    Ok(PrimitiveArray::new(result_buf.into(), None))
 }
 
 /// Softmax over a specific axis of an N-D tensor.
@@ -57,6 +103,8 @@ where
 /// over them using the max-subtraction trick, and writes them back.
 ///
 /// Supports negative axis values (e.g., -1 means last axis).
+///
+/// For f32/f64 tensors with axis dimension >= SIMD_THRESHOLD, uses optimized SIMD kernels.
 pub fn softmax_tensor<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
 where
     T: ArrowPrimitiveType,
@@ -90,28 +138,86 @@ where
     let data: &[T::Native] = input.data().typed_data();
     let mut out = data.to_vec();
 
-    for o in 0..outer_size {
-        for i in 0..inner_size {
-            // Find max
-            let mut max_val = T::Native::neg_infinity();
-            for d in 0..dim_size {
-                let idx = o * dim_size * inner_size + d * inner_size + i;
-                if data[idx] > max_val {
-                    max_val = data[idx];
+    // Dispatch based on type and dimension size
+    match T::DATA_TYPE {
+        DataType::Float32 if dim_size >= SIMD_THRESHOLD => {
+            // SIMD path for f32
+            let data_f32: &[f32] = unsafe { std::mem::transmute(data) };
+            let out_f32: &mut [f32] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+
+            for o in 0..outer_size {
+                for i in 0..inner_size {
+                    // Extract slice along axis dimension
+                    let mut slice_data = Vec::with_capacity(dim_size);
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        slice_data.push(data_f32[idx]);
+                    }
+
+                    // Compute softmax on this slice
+                    let mut slice_out = vec![0.0f32; dim_size];
+                    kernel_simd::softmax_f32(&slice_data, &mut slice_out);
+
+                    // Write back
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        out_f32[idx] = slice_out[d];
+                    }
                 }
             }
-            // Exp and sum
-            let mut sum = T::Native::zero();
-            for d in 0..dim_size {
-                let idx = o * dim_size * inner_size + d * inner_size + i;
-                let e = (data[idx] - max_val).exp();
-                out[idx] = e;
-                sum += e;
+        }
+        DataType::Float64 if dim_size >= SIMD_THRESHOLD => {
+            // SIMD path for f64
+            let data_f64: &[f64] = unsafe { std::mem::transmute(data) };
+            let out_f64: &mut [f64] = unsafe { std::mem::transmute(out.as_mut_slice()) };
+
+            for o in 0..outer_size {
+                for i in 0..inner_size {
+                    // Extract slice along axis dimension
+                    let mut slice_data = Vec::with_capacity(dim_size);
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        slice_data.push(data_f64[idx]);
+                    }
+
+                    // Compute softmax on this slice
+                    let mut slice_out = vec![0.0f64; dim_size];
+                    kernel_simd::softmax_f64(&slice_data, &mut slice_out);
+
+                    // Write back
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        out_f64[idx] = slice_out[d];
+                    }
+                }
             }
-            // Normalize
-            for d in 0..dim_size {
-                let idx = o * dim_size * inner_size + d * inner_size + i;
-                out[idx] = out[idx] / sum;
+        }
+        _ => {
+            // Naive path for all other cases
+            for o in 0..outer_size {
+                for i in 0..inner_size {
+                    // Find max
+                    let mut max_val = T::Native::neg_infinity();
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        if data[idx] > max_val {
+                            max_val = data[idx];
+                        }
+                    }
+                    // Exp and sum
+                    let mut sum = T::Native::zero();
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        let e = (data[idx] - max_val).exp();
+                        out[idx] = e;
+                        sum += e;
+                    }
+                    // Normalize
+                    for d in 0..dim_size {
+                        let idx = o * dim_size * inner_size + d * inner_size + i;
+                        out[idx] = out[idx] / sum;
+                    }
+                }
             }
         }
     }
@@ -176,6 +282,17 @@ mod tests {
     fn test_softmax_rejects_empty() {
         let input = Float32Array::from(Vec::<f32>::new());
         assert!(softmax(&input).is_err());
+    }
+
+    #[test]
+    fn test_softmax_simd_threshold() {
+        // Test with size above SIMD threshold to trigger SIMD path
+        let input: Vec<f32> = (0..2048).map(|i| (i as f32) * 0.01).collect();
+        let array = Float32Array::from(input);
+        let output = softmax(&array).unwrap();
+
+        let sum: f32 = output.values().iter().sum();
+        assert!((sum - 1.0).abs() < 1e-4);
     }
 
     // --- Tensor softmax tests ---
