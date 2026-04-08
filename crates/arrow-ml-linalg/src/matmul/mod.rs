@@ -1,3 +1,4 @@
+mod host_tensor;
 mod kernel_f32;
 mod kernel_f64;
 mod packing;
@@ -6,10 +7,15 @@ use arrow::array::ArrowPrimitiveType;
 use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
 use arrow::tensor::Tensor;
+use arrow_ml_common::backend::Backend;
+use arrow_ml_common::device_tensor::{dtype, AmDeviceType};
+use arrow_ml_common::kernels::matmul::MatmulKernel;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
+use host_tensor::OwnedHostTensor;
 use num_traits::{One, Zero};
+use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul};
 
 /// Extracts 2D shape (rows, cols) from a Tensor, returning an error if not 2D.
@@ -53,11 +59,9 @@ fn naive_matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f
 }
 
 fn matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    // Try GPU backend for large matrices
+    // Try GPU backend for large matrices.
     if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
-        let registry = BackendRegistry::global();
-        let mut c = vec![0.0f32; m * n];
-        if registry.try_matmul_f32(a, b, &mut c, m, k, n).is_some() {
+        if let Some(c) = try_backend_matmul_f32(a, b, m, k, n) {
             return c;
         }
     }
@@ -67,6 +71,51 @@ fn matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     } else {
         naive_matmul_f32(a, b, m, k, n)
     }
+}
+
+/// Attempt the matmul through the highest-priority backend that supports
+/// f32 on the CPU device. Returns `None` if no backend supports it or the
+/// backend errored out — caller is expected to fall through to SIMD.
+///
+/// Uses a thread-local handle cache so the kernel is opened once per thread
+/// and amortized across many invocations.
+fn try_backend_matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Option<Vec<f32>> {
+    let backend: &'static Backend = BackendRegistry::global().best_matmul()?;
+    let ops = backend.matmul.as_ref()?;
+    if !ops.supports_dtype(dtype::FLOAT32, AmDeviceType::Cpu as i32) {
+        return None;
+    }
+
+    MATMUL_F32_KERNEL.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            match MatmulKernel::open(backend, dtype::FLOAT32, AmDeviceType::Cpu as i32) {
+                Ok(k) => *slot = Some(k),
+                Err(_) => return None,
+            }
+        }
+        let kernel = slot.as_ref().expect("just-initialized");
+
+        let a_tensor = OwnedHostTensor::from_f32_slice(a, m, k);
+        let b_tensor = OwnedHostTensor::from_f32_slice(b, k, n);
+        let mut c_tensor = OwnedHostTensor::from_f32_vec(vec![0.0f32; m * n], m, n);
+
+        let invoke_result = unsafe {
+            kernel.invoke(a_tensor.as_ffi(), b_tensor.as_ffi(), c_tensor.as_ffi_mut())
+        };
+        if invoke_result.is_err() {
+            return None;
+        }
+
+        Some(c_tensor.as_f32_slice().to_vec())
+    })
+}
+
+thread_local! {
+    /// Per-thread cached `MatmulKernel` handle for f32 on the CPU device.
+    /// Opened lazily on first use, never closed (lives until thread exit,
+    /// at which point `Drop` fires `am_matmul_close`).
+    static MATMUL_F32_KERNEL: RefCell<Option<MatmulKernel<'static>>> = const { RefCell::new(None) };
 }
 
 fn matvec_f32(a: &[f32], x: &[f32], m: usize, n: usize) -> Vec<f32> {
@@ -99,12 +148,20 @@ fn naive_gemm_64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64>
 }
 
 fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
-    // Try GPU backend for large matrices
+    // GPU branch: probe for f64 support before paying the open/dispatch cost.
+    // The Metal backend reports `supports_dtype(FLOAT64, _) == 0` so on
+    // macOS this short-circuits straight to SIMD with no open call.
     if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
-        let registry = BackendRegistry::global();
-        let mut c = vec![0.0f64; m * n];
-        if registry.try_matmul_f64(a, b, &mut c, m, k, n).is_some() {
-            return c;
+        if let Some(backend) = BackendRegistry::global().best_matmul() {
+            if let Some(ops) = backend.matmul.as_ref() {
+                if ops.supports_dtype(dtype::FLOAT64, AmDeviceType::Cpu as i32) {
+                    // No backend currently exports f64 matmul; this branch
+                    // is plumbing for when one does. Skip silently —
+                    // implementation lands with the first f64-capable
+                    // backend.
+                    let _ = (a, b, m, k, n);
+                }
+            }
         }
     }
 

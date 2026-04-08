@@ -1,9 +1,15 @@
 //! Metal GPU implementation of f32 matrix multiplication.
+//!
+//! Refactored for the v2 ABI: split into a one-time setup
+//! ([`MatmulKernel::new`], called from `am_matmul_open`) and a per-call
+//! dispatch ([`MatmulKernel::invoke`], called from `am_matmul_invoke`).
+//! The MSL source itself is unchanged from v1.
 
+use arrow_ml_common::device_tensor::FFI_TensorArray;
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
 };
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Block dimensions matching the MSL kernel constants.
 const BM: u64 = 64;
@@ -15,10 +21,10 @@ const THREADS_Y: u64 = BN / TN; // 16
 
 /// MSL source for the high-performance tiled matmul kernel.
 ///
-/// Each threadgroup computes a BM x BN (64 x 64) tile of C.
-/// Each thread computes a TM x TN (4 x 4) sub-block.
-/// Tiles of A and B are cooperatively loaded into threadgroup shared memory
-/// with bank-conflict padding. Inner loop uses `fma()` for fused multiply-add.
+/// Each threadgroup computes a BM x BN (64 x 64) tile of C. Each thread
+/// computes a TM x TN (4 x 4) sub-block. Tiles of A and B are cooperatively
+/// loaded into threadgroup shared memory with bank-conflict padding. Inner
+/// loop uses `fma()` for fused multiply-add.
 const MATMUL_F32_MSL: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -42,25 +48,20 @@ kernel void matmul_f32(
     uint2 tid [[thread_position_in_threadgroup]],
     uint2 bid [[threadgroup_position_in_grid]]
 ) {
-    // Shared memory tiles with bank-conflict padding
     threadgroup float As[BM][BK + 1];
     threadgroup float Bs[BK][BN + 1];
 
     uint flat_id = tid.x * THREADS_Y + tid.y;
 
-    // Base output position for this thread's TM x TN block
     uint c_row_base = bid.x * BM + tid.x * TM;
     uint c_col_base = bid.y * BN + tid.y * TN;
 
-    // Accumulators
     float acc[TM][TN];
     for (uint i = 0; i < TM; i++)
         for (uint j = 0; j < TN; j++)
             acc[i][j] = 0.0f;
 
-    // Iterate over K in BK-sized tiles
     for (uint bk = 0; bk < K; bk += BK) {
-        // --- Cooperative load of A tile [BM x BK] ---
         for (uint idx = flat_id; idx < BM * BK; idx += NUM_THREADS) {
             uint m_local = idx / BK;
             uint k_local = idx % BK;
@@ -70,7 +71,6 @@ kernel void matmul_f32(
                 ? A[m_global * K + k_global] : 0.0f;
         }
 
-        // --- Cooperative load of B tile [BK x BN] ---
         for (uint idx = flat_id; idx < BK * BN; idx += NUM_THREADS) {
             uint k_local = idx / BN;
             uint n_local = idx % BN;
@@ -82,7 +82,6 @@ kernel void matmul_f32(
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // --- Compute TM x TN partial products from shared memory ---
         for (uint p = 0; p < BK; p++) {
             float a_reg[TM];
             for (uint tm = 0; tm < TM; tm++) {
@@ -99,7 +98,6 @@ kernel void matmul_f32(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // --- Store TM x TN results to global memory ---
     for (uint tm = 0; tm < TM; tm++) {
         uint r = c_row_base + tm;
         if (r >= M) continue;
@@ -153,20 +151,22 @@ impl BufferCache {
     }
 }
 
+/// Process-wide Metal device + queue + compiled pipeline state.
+///
+/// Lazily initialized on first kernel open. Shared across all open
+/// `MatmulKernel` instances so the MSL source is compiled once.
 struct MetalContext {
     device: Device,
     queue: CommandQueue,
     pipeline: ComputePipelineState,
-    buffers: Mutex<BufferCache>,
 }
 
 // SAFETY: Metal's Device, CommandQueue, and ComputePipelineState are
 // thread-safe Objective-C objects with internal synchronization.
-// BufferCache is protected by a Mutex.
 unsafe impl Send for MetalContext {}
 unsafe impl Sync for MetalContext {}
 
-fn get_context() -> Result<&'static MetalContext, String> {
+fn metal_context() -> Result<&'static MetalContext, String> {
     static CONTEXT: OnceLock<Result<MetalContext, String>> = OnceLock::new();
 
     let result = CONTEXT.get_or_init(|| {
@@ -187,7 +187,6 @@ fn get_context() -> Result<&'static MetalContext, String> {
             device,
             queue,
             pipeline,
-            buffers: Mutex::new(BufferCache::new()),
         })
     });
 
@@ -197,81 +196,143 @@ fn get_context() -> Result<&'static MetalContext, String> {
     }
 }
 
-/// Perform f32 matrix multiplication on the Metal GPU.
+/// One open matmul kernel handle.
 ///
-/// `a` is row-major (m x k), `b` is row-major (k x n).
-/// Returns a `Vec<f32>` of length m*n containing the row-major result C = A*B.
-pub fn metal_matmul_f32(
-    a: &[f32],
-    b: &[f32],
-    m: usize,
-    k: usize,
-    n: usize,
-) -> Result<Vec<f32>, String> {
-    let ctx = get_context()?;
+/// Created by `am_matmul_open`, destroyed by `am_matmul_close`. Holds a
+/// reference to the global [`MetalContext`] (so the compiled pipeline is
+/// shared across all handles) plus a per-handle [`BufferCache`] (so the
+/// MTLBuffers grow on demand and are reused across `invoke` calls — that's
+/// where the v2 amortization win lives).
+pub struct MatmulKernel {
+    ctx: &'static MetalContext,
+    buffers: BufferCache,
+    dtype: i32,
+}
 
-    let a_byte_len = (a.len() * std::mem::size_of::<f32>()) as u64;
-    let b_byte_len = (b.len() * std::mem::size_of::<f32>()) as u64;
-    let c_byte_len = (m * n * std::mem::size_of::<f32>()) as u64;
-
-    let mut cache = ctx.buffers.lock().unwrap();
-    cache.ensure_sizes(&ctx.device, a_byte_len, b_byte_len, c_byte_len);
-    let buf_a = cache.buf_a.as_ref().unwrap();
-    let buf_b = cache.buf_b.as_ref().unwrap();
-    let buf_c = cache.buf_c.as_ref().unwrap();
-
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            a.as_ptr() as *const u8,
-            buf_a.contents() as *mut u8,
-            a_byte_len as usize,
-        );
-        std::ptr::copy_nonoverlapping(
-            b.as_ptr() as *const u8,
-            buf_b.contents() as *mut u8,
-            b_byte_len as usize,
-        );
+impl MatmulKernel {
+    pub fn new(dtype: i32) -> Result<Self, String> {
+        let ctx = metal_context()?;
+        Ok(MatmulKernel {
+            ctx,
+            buffers: BufferCache::new(),
+            dtype,
+        })
     }
 
-    let m_u32 = m as u32;
-    let k_u32 = k as u32;
-    let n_u32 = n as u32;
+    /// Run one matmul.
+    ///
+    /// `a`, `b`, `c` must all be rank-2 row-major f32 tensors. The CPU
+    /// device path host-stages from the tensor's `array.buffer(1)`
+    /// pointer into the cached MTLBuffer. (The Metal device path — using
+    /// MTLBuffer-backed tensors directly — is not implemented in v2;
+    /// linalg always passes CPU tensors.)
+    ///
+    /// # Safety
+    ///
+    /// `a`, `b`, `c` must be valid `FFI_TensorArray`s with non-null
+    /// `shape`/`strides` and a non-null data buffer at `array.buffer(1)`.
+    pub unsafe fn invoke(
+        &mut self,
+        a: &FFI_TensorArray,
+        b: &FFI_TensorArray,
+        c: &mut FFI_TensorArray,
+    ) -> Result<(), String> {
+        if a.dtype != self.dtype || b.dtype != self.dtype || c.dtype != self.dtype {
+            return Err(format!(
+                "dtype mismatch: kernel {} but tensors {}/{}/{}",
+                self.dtype, a.dtype, b.dtype, c.dtype
+            ));
+        }
+        if a.ndim != 2 || b.ndim != 2 || c.ndim != 2 {
+            return Err(format!(
+                "matmul requires rank-2 tensors, got {}/{}/{}",
+                a.ndim, b.ndim, c.ndim
+            ));
+        }
 
-    let cmd_buf = ctx.queue.new_command_buffer();
-    let encoder = cmd_buf.new_compute_command_encoder();
-    encoder.set_compute_pipeline_state(&ctx.pipeline);
-    encoder.set_buffer(0, Some(buf_a), 0);
-    encoder.set_buffer(1, Some(buf_b), 0);
-    encoder.set_buffer(2, Some(buf_c), 0);
+        let a_shape = unsafe { std::slice::from_raw_parts(a.shape, 2) };
+        let b_shape = unsafe { std::slice::from_raw_parts(b.shape, 2) };
+        let c_shape = unsafe { std::slice::from_raw_parts(c.shape, 2) };
 
-    encoder.set_bytes(
-        3,
-        std::mem::size_of::<u32>() as u64,
-        &m_u32 as *const u32 as *const std::ffi::c_void,
-    );
-    encoder.set_bytes(
-        4,
-        std::mem::size_of::<u32>() as u64,
-        &k_u32 as *const u32 as *const std::ffi::c_void,
-    );
-    encoder.set_bytes(
-        5,
-        std::mem::size_of::<u32>() as u64,
-        &n_u32 as *const u32 as *const std::ffi::c_void,
-    );
+        let m = a_shape[0] as usize;
+        let k = a_shape[1] as usize;
+        let k2 = b_shape[0] as usize;
+        let n = b_shape[1] as usize;
+        if k != k2 {
+            return Err(format!("inner dimension mismatch: A is {m}x{k}, B is {k2}x{n}"));
+        }
+        if c_shape[0] as usize != m || c_shape[1] as usize != n {
+            return Err(format!(
+                "output shape mismatch: expected {m}x{n}, got {}x{}",
+                c_shape[0], c_shape[1]
+            ));
+        }
 
-    let groups = MTLSize::new((m as u64 + BM - 1) / BM, (n as u64 + BN - 1) / BN, 1);
-    let threads_per_group = MTLSize::new(THREADS_X, THREADS_Y, 1);
+        let elem_size = std::mem::size_of::<f32>() as u64;
+        let a_bytes = (m * k) as u64 * elem_size;
+        let b_bytes = (k * n) as u64 * elem_size;
+        let c_bytes = (m * n) as u64 * elem_size;
 
-    encoder.dispatch_thread_groups(groups, threads_per_group);
-    encoder.end_encoding();
-    cmd_buf.commit();
-    cmd_buf.wait_until_completed();
+        self.buffers
+            .ensure_sizes(&self.ctx.device, a_bytes, b_bytes, c_bytes);
+        let buf_a = self.buffers.buf_a.as_ref().expect("ensured");
+        let buf_b = self.buffers.buf_b.as_ref().expect("ensured");
+        let buf_c = self.buffers.buf_c.as_ref().expect("ensured");
 
-    let ptr = buf_c.contents() as *const f32;
-    let result = unsafe { std::slice::from_raw_parts(ptr, m * n) }.to_vec();
+        let a_data_ptr = a.array.buffer(1);
+        let b_data_ptr = b.array.buffer(1);
+        if a_data_ptr.is_null() || b_data_ptr.is_null() {
+            return Err("input tensor data buffer is null".to_string());
+        }
 
-    drop(cache);
+        unsafe {
+            std::ptr::copy_nonoverlapping(a_data_ptr, buf_a.contents() as *mut u8, a_bytes as usize);
+            std::ptr::copy_nonoverlapping(b_data_ptr, buf_b.contents() as *mut u8, b_bytes as usize);
+        }
 
-    Ok(result)
+        let m_u32 = m as u32;
+        let k_u32 = k as u32;
+        let n_u32 = n as u32;
+
+        let cmd_buf = self.ctx.queue.new_command_buffer();
+        let encoder = cmd_buf.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&self.ctx.pipeline);
+        encoder.set_buffer(0, Some(buf_a), 0);
+        encoder.set_buffer(1, Some(buf_b), 0);
+        encoder.set_buffer(2, Some(buf_c), 0);
+
+        encoder.set_bytes(
+            3,
+            std::mem::size_of::<u32>() as u64,
+            &m_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        encoder.set_bytes(
+            4,
+            std::mem::size_of::<u32>() as u64,
+            &k_u32 as *const u32 as *const std::ffi::c_void,
+        );
+        encoder.set_bytes(
+            5,
+            std::mem::size_of::<u32>() as u64,
+            &n_u32 as *const u32 as *const std::ffi::c_void,
+        );
+
+        let groups = MTLSize::new((m as u64).div_ceil(BM), (n as u64).div_ceil(BN), 1);
+        let threads_per_group = MTLSize::new(THREADS_X, THREADS_Y, 1);
+
+        encoder.dispatch_thread_groups(groups, threads_per_group);
+        encoder.end_encoding();
+        cmd_buf.commit();
+        cmd_buf.wait_until_completed();
+
+        let c_data_ptr = c.array.buffer(1) as *mut u8;
+        if c_data_ptr.is_null() {
+            return Err("output tensor data buffer is null".to_string());
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf_c.contents() as *const u8, c_data_ptr, c_bytes as usize);
+        }
+
+        Ok(())
+    }
 }
