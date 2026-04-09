@@ -1,3 +1,7 @@
+use crate::backend::{
+    Backend, AM_ERR_DEVICE_MISMATCH, AM_ERR_GPU, AM_ERR_INVALID, AM_ERR_UNSUPPORTED,
+    AM_ERR_UNSUPPORTED_DTYPE,
+};
 use arrow::error::ArrowError;
 use std::fmt;
 
@@ -19,6 +23,36 @@ pub enum KernelError {
     InvalidArgument(String),
     /// GPU backend error (Metal, etc.)
     GpuError(String),
+    /// Backend doesn't implement the requested kernel.
+    Unsupported,
+    /// Backend doesn't support the requested dtype for this kernel.
+    UnsupportedDtype,
+    /// A tensor's device doesn't match the device the kernel was opened for.
+    DeviceMismatch,
+}
+
+impl KernelError {
+    /// Construct a `KernelError` from a backend ABI return code, pulling the
+    /// thread-local last-error string from the backend if it exports one.
+    pub fn from_code(rc: i32, backend: &Backend) -> Self {
+        let msg = backend.last_error_message();
+        match rc {
+            AM_ERR_UNSUPPORTED => KernelError::Unsupported,
+            AM_ERR_GPU => KernelError::GpuError(if msg.is_empty() {
+                "backend reported GPU error".to_string()
+            } else {
+                msg
+            }),
+            AM_ERR_INVALID => KernelError::InvalidArgument(if msg.is_empty() {
+                "backend reported invalid argument".to_string()
+            } else {
+                msg
+            }),
+            AM_ERR_UNSUPPORTED_DTYPE => KernelError::UnsupportedDtype,
+            AM_ERR_DEVICE_MISMATCH => KernelError::DeviceMismatch,
+            _ => KernelError::InvalidArgument(format!("unknown backend error code {rc}: {msg}")),
+        }
+    }
 }
 
 impl fmt::Display for KernelError {
@@ -41,6 +75,13 @@ impl fmt::Display for KernelError {
             KernelError::Arrow(e) => write!(f, "Arrow error: {e}"),
             KernelError::InvalidArgument(msg) => write!(f, "Invalid argument: {msg}"),
             KernelError::GpuError(msg) => write!(f, "GPU error: {msg}"),
+            KernelError::Unsupported => write!(f, "backend does not support this kernel"),
+            KernelError::UnsupportedDtype => {
+                write!(f, "backend does not support this dtype for this kernel")
+            }
+            KernelError::DeviceMismatch => {
+                write!(f, "tensor device does not match kernel device")
+            }
         }
     }
 }

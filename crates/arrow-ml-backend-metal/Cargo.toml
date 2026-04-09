@@ -14,4 +14,6 @@ readme = "README.md"
 crate-type = ["cdylib"]
 
 [dependencies]
+arrow-ml-common = { path = "../arrow-ml-common" }
+arrow = { version = ">=56, <59", default-features = false, features = ["ffi"] }
 metal = "0.31"

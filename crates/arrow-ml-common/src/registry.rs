@@ -10,10 +10,11 @@
 //!    `libarrow_ml_backend_*{.dylib,.so,.dll}` in a library search directory
 //!    are loaded directly. Libraries already loaded via a manifest are skipped.
 //!
-//! After discovery, backends are sorted by priority (highest first). Kernel
-//! dispatch functions iterate the list and call the first backend that succeeds.
+//! After discovery, backends are sorted by priority (highest first). Per-kernel
+//! "best backend" selectors (e.g. [`BackendRegistry::best_matmul`]) return the
+//! highest-priority backend that exports a given kernel's symbol family.
 
-use crate::backend::{AmMatmulF32Fn, AmMatmulF64Fn, Backend, AM_OK};
+use crate::backend::Backend;
 use crate::manifest::BackendManifest;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -204,72 +205,28 @@ impl BackendRegistry {
         self.backends.iter().map(|b| b.name.as_str()).collect()
     }
 
-    /// Returns the highest-priority `matmul_f32` function pointer, if any
-    /// backend provides one.
-    pub fn matmul_f32(&self) -> Option<AmMatmulF32Fn> {
-        self.backends.iter().find_map(|b| b.matmul_f32)
+    /// Returns the highest-priority backend that exports the matmul symbol
+    /// family, or `None` if no loaded backend implements matmul.
+    ///
+    /// This does **not** check dtype/device support. Prefer
+    /// [`BackendRegistry::best_matmul_for`] if you care which dtype and
+    /// device the kernel needs to handle.
+    pub fn best_matmul(&self) -> Option<&Backend> {
+        self.backends.iter().find(|b| b.matmul.is_some())
     }
 
-    /// Returns the highest-priority `matmul_f64` function pointer, if any
-    /// backend provides one.
-    pub fn matmul_f64(&self) -> Option<AmMatmulF64Fn> {
-        self.backends.iter().find_map(|b| b.matmul_f64)
-    }
-
-    /// Convenience: run matmul_f32 through the best backend. Returns `None`
-    /// if no backend supports it or the backend returned an error.
-    pub fn try_matmul_f32(
-        &self,
-        a: &[f32],
-        b: &[f32],
-        c: &mut [f32],
-        m: usize,
-        k: usize,
-        n: usize,
-    ) -> Option<()> {
-        let f = self.matmul_f32()?;
-        let rc = unsafe {
-            f(
-                a.as_ptr(),
-                b.as_ptr(),
-                c.as_mut_ptr(),
-                m as u32,
-                k as u32,
-                n as u32,
-            )
-        };
-        if rc == AM_OK {
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    /// Convenience: run matmul_f64 through the best backend.
-    pub fn try_matmul_f64(
-        &self,
-        a: &[f64],
-        b: &[f64],
-        c: &mut [f64],
-        m: usize,
-        k: usize,
-        n: usize,
-    ) -> Option<()> {
-        let f = self.matmul_f64()?;
-        let rc = unsafe {
-            f(
-                a.as_ptr(),
-                b.as_ptr(),
-                c.as_mut_ptr(),
-                m as u32,
-                k as u32,
-                n as u32,
-            )
-        };
-        if rc == AM_OK {
-            Some(())
-        } else {
-            None
-        }
+    /// Returns the highest-priority backend whose matmul kernel reports
+    /// support for `(dtype, device_type)`, or `None` if no loaded backend
+    /// supports that combination.
+    ///
+    /// Iterates through every loaded backend in priority order — so if the
+    /// top-priority backend exports matmul but only supports a different
+    /// dtype, the next backend is tried, and so on.
+    pub fn best_matmul_for(&self, dtype: i32, device_type: i32) -> Option<&Backend> {
+        self.backends.iter().find(|b| {
+            b.matmul
+                .as_ref()
+                .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+        })
     }
 }

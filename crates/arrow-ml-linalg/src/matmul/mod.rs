@@ -4,12 +4,17 @@ mod packing;
 
 use arrow::array::ArrowPrimitiveType;
 use arrow::buffer::Buffer;
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Float32Type};
 use arrow::tensor::Tensor;
+use arrow_ml_common::backend::Backend;
+use arrow_ml_common::device_tensor::{dtype, AmDeviceType};
+use arrow_ml_common::host_tensor::OwnedFFITensor;
+use arrow_ml_common::kernels::matmul::MatmulKernel;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_common::KernelError;
 use arrow_ml_common::Result;
 use num_traits::{One, Zero};
+use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul};
 
 /// Extracts 2D shape (rows, cols) from a Tensor, returning an error if not 2D.
@@ -52,21 +57,96 @@ fn naive_matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f
     c
 }
 
-fn matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    // Try GPU backend for large matrices
+fn matmul_f32(
+    a: &Tensor<'_, Float32Type>,
+    b: &Tensor<'_, Float32Type>,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Vec<f32> {
+    // Try GPU backend for large matrices. Inputs cross the FFI boundary as
+    // FFI_TensorArrays built directly from the arrow tensors — no host copy.
     if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
-        let registry = BackendRegistry::global();
-        let mut c = vec![0.0f32; m * n];
-        if registry.try_matmul_f32(a, b, &mut c, m, k, n).is_some() {
+        if let Some(c) = try_backend_matmul_f32(a, b, m, n) {
             return c;
         }
     }
 
+    let a_slice = a.data().typed_data::<f32>();
+    let b_slice = b.data().typed_data::<f32>();
     if m >= SIMD_THRESHOLD || n >= SIMD_THRESHOLD || k >= SIMD_THRESHOLD {
-        kernel_f32::gemm(a, b, m, k, n)
+        kernel_f32::gemm(a_slice, b_slice, m, k, n)
     } else {
-        naive_matmul_f32(a, b, m, k, n)
+        naive_matmul_f32(a_slice, b_slice, m, k, n)
     }
+}
+
+/// Attempt the matmul through the highest-priority backend that supports
+/// f32 on the CPU device. Returns `None` if no backend supports it or the
+/// backend errored out — caller is expected to fall through to SIMD.
+///
+/// Uses a thread-local handle cache so the kernel is opened once per thread
+/// and amortized across many invocations. The output is written directly
+/// into a freshly-allocated `Vec<f32>`: we wrap it in a `Buffer`, pass a
+/// clone to the FFI wrapper, and reclaim the underlying `Vec` via
+/// [`Buffer::into_vec`] once the wrapper has been dropped.
+fn try_backend_matmul_f32(
+    a: &Tensor<'_, Float32Type>,
+    b: &Tensor<'_, Float32Type>,
+    m: usize,
+    n: usize,
+) -> Option<Vec<f32>> {
+    let backend: &'static Backend =
+        BackendRegistry::global().best_matmul_for(dtype::FLOAT32, AmDeviceType::Cpu as i32)?;
+
+    MATMUL_F32_KERNEL.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            match MatmulKernel::open(backend, dtype::FLOAT32, AmDeviceType::Cpu as i32) {
+                Ok(k) => *slot = Some(k),
+                Err(_) => return None,
+            }
+        }
+        let kernel = slot.as_ref().expect("just-initialized");
+
+        let a_ffi = OwnedFFITensor::try_from(a).ok()?;
+        let b_ffi = OwnedFFITensor::try_from(b).ok()?;
+
+        // Allocate the output as a `Buffer` over a freshly-owned `Vec<f32>`.
+        // The FFI wrapper clones the buffer's `Arc` (refcount becomes 2);
+        // after the kernel writes and we drop the wrapper, `out_buf` is the
+        // sole owner again and we can reclaim the `Vec` without copying.
+        let out_buf = Buffer::from_vec(vec![0.0f32; m * n]);
+        let shape = [m, n];
+        let strides = [n * std::mem::size_of::<f32>(), std::mem::size_of::<f32>()];
+        let mut out_ffi =
+            OwnedFFITensor::from_buffer(out_buf.clone(), &DataType::Float32, &shape, &strides)
+                .ok()?;
+
+        let invoke_result =
+            unsafe { kernel.invoke(a_ffi.as_ffi(), b_ffi.as_ffi(), out_ffi.as_ffi_mut()) };
+        drop(out_ffi);
+        if invoke_result.is_err() {
+            return None;
+        }
+
+        // Happy path: `out_buf` is uniquely owned, so `into_vec` succeeds
+        // without allocating or copying. If for any reason the refcount is
+        // still >1 (shouldn't happen on this path), fall back to a copy so
+        // we don't silently drop the kernel's result.
+        Some(
+            out_buf
+                .into_vec::<f32>()
+                .unwrap_or_else(|b| b.typed_data::<f32>().to_vec()),
+        )
+    })
+}
+
+thread_local! {
+    /// Per-thread cached `MatmulKernel` handle for f32 on the CPU device.
+    /// Opened lazily on first use, never closed (lives until thread exit,
+    /// at which point `Drop` fires `am_matmul_close`).
+    static MATMUL_F32_KERNEL: RefCell<Option<MatmulKernel<'static>>> = const { RefCell::new(None) };
 }
 
 fn matvec_f32(a: &[f32], x: &[f32], m: usize, n: usize) -> Vec<f32> {
@@ -99,13 +179,17 @@ fn naive_gemm_64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64>
 }
 
 fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
-    // Try GPU backend for large matrices
-    if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
-        let registry = BackendRegistry::global();
-        let mut c = vec![0.0f64; m * n];
-        if registry.try_matmul_f64(a, b, &mut c, m, k, n).is_some() {
-            return c;
-        }
+    // GPU branch: probe for f64 support before paying the open/dispatch cost.
+    // The Metal backend reports no support for FLOAT64 so on macOS this
+    // short-circuits straight to SIMD with no open call. No backend
+    // currently exports f64 matmul; this probe is plumbing for when one
+    // does — implementation lands with the first f64-capable backend.
+    if (m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD)
+        && BackendRegistry::global()
+            .best_matmul_for(dtype::FLOAT64, AmDeviceType::Cpu as i32)
+            .is_some()
+    {
+        let _ = (a, b, m, k, n);
     }
 
     if m >= SIMD_THRESHOLD || n >= SIMD_THRESHOLD || k >= SIMD_THRESHOLD {
@@ -257,9 +341,16 @@ where
     // Each arm uses concrete types to avoid associated-type unification issues.
     let result_buf = match T::DATA_TYPE {
         DataType::Float32 => {
-            let mut ab = matmul_f32(a.data().typed_data(), b.data().typed_data(), m, k, n);
+            // SAFETY: T::DATA_TYPE == Float32 guarantees T == Float32Type and
+            // T::Native == f32. Tensor<'_, T> has identical layout to
+            // Tensor<'_, Float32Type> because the type parameter only appears
+            // in PhantomData. Same pattern is used below for alpha/beta.
+            let a_f32: &Tensor<'_, Float32Type> =
+                unsafe { &*(a as *const Tensor<'_, T> as *const Tensor<'_, Float32Type>) };
+            let b_f32: &Tensor<'_, Float32Type> =
+                unsafe { &*(b as *const Tensor<'_, T> as *const Tensor<'_, Float32Type>) };
+            let mut ab = matmul_f32(a_f32, b_f32, m, k, n);
             let c_f32: Option<&[f32]> = c.map(|t| t.data().typed_data());
-            // SAFETY: T::DATA_TYPE == Float32 guarantees T::Native == f32
             let alpha_f32: f32 = unsafe { *(&alpha as *const T::Native as *const f32) };
             let beta_f32: f32 = unsafe { *(&beta as *const T::Native as *const f32) };
             apply_alpha_beta(&mut ab, alpha_f32, beta_f32, c_f32);
