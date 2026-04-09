@@ -18,6 +18,8 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"
+ndarray = "0.16"
+matrixmultiply = { version = "0.3", features = ["threading"] }
 
 [[bench]]
 name = "matmul_bench"

@@ -3,6 +3,7 @@ use arrow::datatypes::{Float32Type, Float64Type};
 use arrow::tensor::Tensor;
 use arrow_ml_linalg::matmul::matmul;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use ndarray::Array2;
 
 fn make_f32_tensor(rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
     let data: Vec<f32> = (0..rows * cols)
@@ -63,9 +64,40 @@ fn bench_matmul_f32_square(c: &mut Criterion) {
     for &size in &[16, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
         let a = make_f32_tensor(size, size);
         let b = make_f32_tensor(size, size);
-        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bench, _| {
+
+        let a_data: Vec<f32> = (0..size * size)
+            .map(|i| ((i % 100) as f32) * 0.01)
+            .collect();
+        let b_data: Vec<f32> = (0..size * size)
+            .map(|i| ((i % 100) as f32) * 0.01)
+            .collect();
+        let a_nd = Array2::from_shape_vec((size, size), a_data.clone()).unwrap();
+        let b_nd = Array2::from_shape_vec((size, size), b_data.clone()).unwrap();
+
+        group.bench_with_input(BenchmarkId::new("arrow_ml", size), &size, |bench, _| {
             bench.iter(|| matmul(&a, &b).unwrap())
         });
+
+        group.bench_with_input(BenchmarkId::new("ndarray", size), &size, |bench, _| {
+            bench.iter(|| a_nd.dot(&b_nd))
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("matrixmultiply", size),
+            &size,
+            |bench, &s| {
+                bench.iter(|| {
+                    let mut c = vec![0.0f32; s * s];
+                    unsafe {
+                        matrixmultiply::sgemm(
+                            s, s, s, 1.0, a_data.as_ptr(), s as isize, 1, b_data.as_ptr(),
+                            s as isize, 1, 0.0, c.as_mut_ptr(), s as isize, 1,
+                        );
+                    }
+                    c
+                })
+            },
+        );
     }
     group.finish();
 }
@@ -75,9 +107,40 @@ fn bench_matmul_f64_square(c: &mut Criterion) {
     for &size in &[16, 32, 64, 128, 256, 512] {
         let a = make_f64_tensor(size, size);
         let b = make_f64_tensor(size, size);
-        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bench, _| {
+
+        let a_data: Vec<f64> = (0..size * size)
+            .map(|i| ((i % 100) as f64) * 0.01)
+            .collect();
+        let b_data: Vec<f64> = (0..size * size)
+            .map(|i| ((i % 100) as f64) * 0.01)
+            .collect();
+        let a_nd = Array2::from_shape_vec((size, size), a_data.clone()).unwrap();
+        let b_nd = Array2::from_shape_vec((size, size), b_data.clone()).unwrap();
+
+        group.bench_with_input(BenchmarkId::new("arrow_ml", size), &size, |bench, _| {
             bench.iter(|| matmul(&a, &b).unwrap())
         });
+
+        group.bench_with_input(BenchmarkId::new("ndarray", size), &size, |bench, _| {
+            bench.iter(|| a_nd.dot(&b_nd))
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("matrixmultiply", size),
+            &size,
+            |bench, &s| {
+                bench.iter(|| {
+                    let mut c = vec![0.0f64; s * s];
+                    unsafe {
+                        matrixmultiply::dgemm(
+                            s, s, s, 1.0, a_data.as_ptr(), s as isize, 1, b_data.as_ptr(),
+                            s as isize, 1, 0.0, c.as_mut_ptr(), s as isize, 1,
+                        );
+                    }
+                    c
+                })
+            },
+        );
     }
     group.finish();
 }
