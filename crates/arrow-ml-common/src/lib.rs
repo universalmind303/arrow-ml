@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod device_tensor;
 pub mod error;
+pub mod host_tensor;
 pub mod kernels;
 pub mod manifest;
 pub mod registry;
