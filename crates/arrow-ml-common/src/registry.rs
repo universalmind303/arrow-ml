@@ -208,9 +208,25 @@ impl BackendRegistry {
     /// Returns the highest-priority backend that exports the matmul symbol
     /// family, or `None` if no loaded backend implements matmul.
     ///
-    /// Use the returned backend's `matmul` field to probe `supports_dtype`
-    /// and to open a [`crate::kernels::matmul::MatmulKernel`].
+    /// This does **not** check dtype/device support. Prefer
+    /// [`BackendRegistry::best_matmul_for`] if you care which dtype and
+    /// device the kernel needs to handle.
     pub fn best_matmul(&self) -> Option<&Backend> {
         self.backends.iter().find(|b| b.matmul.is_some())
+    }
+
+    /// Returns the highest-priority backend whose matmul kernel reports
+    /// support for `(dtype, device_type)`, or `None` if no loaded backend
+    /// supports that combination.
+    ///
+    /// Iterates through every loaded backend in priority order — so if the
+    /// top-priority backend exports matmul but only supports a different
+    /// dtype, the next backend is tried, and so on.
+    pub fn best_matmul_for(&self, dtype: i32, device_type: i32) -> Option<&Backend> {
+        self.backends.iter().find(|b| {
+            b.matmul
+                .as_ref()
+                .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+        })
     }
 }

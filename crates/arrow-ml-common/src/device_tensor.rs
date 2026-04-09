@@ -57,9 +57,12 @@ pub mod dtype {
 
 /// FFI representation of an N-dimensional Arrow tensor on a specific device.
 ///
-/// Composed over `FFI_ArrowArray` for buffer lifetime management.
-/// `shape` and `strides` are owned by the producer and freed by the embedded
-/// array's release callback.
+/// Composed over `FFI_ArrowArray` for data buffer lifetime management: the
+/// embedded array's release callback is responsible for the underlying
+/// Arrow buffer(s). The `shape` and `strides` pointers are owned separately
+/// by the producer-side wrapper and must remain valid for the lifetime of
+/// that wrapper (for example, [`crate::host_tensor::OwnedFFITensor`] owns
+/// them as boxed slices).
 #[repr(C)]
 pub struct FFI_TensorArray {
     /// Standard Arrow C Data Interface array. Offset 0, downcastable to

@@ -1,15 +1,15 @@
-//! `OwnedFFITensor`: ownership wrapper that bridges an `arrow::tensor::Tensor`
-//! into an [`FFI_TensorArray`] for the v2 backend ABI.
+//! `OwnedFFITensor`: ownership wrapper that bridges an arrow buffer into an
+//! [`FFI_TensorArray`] for the v2 backend ABI.
 //!
 //! ## Why this wrapper exists
 //!
 //! [`FFI_TensorArray::shape`] and [`FFI_TensorArray::strides`] are
-//! `*const i64` raw pointers. `arrow::tensor::Tensor` stores its shape and
-//! strides as `Vec<usize>` instead. The two layouts can't share storage,
-//! and arrow-rs's [`FFI_ArrowArray`] doesn't expose its `private_data`
-//! field, so there is no way to attach the converted i64 boxes to the
-//! embedded array. Something has to allocate the boxes and keep them alive
-//! for the duration of the kernel call — that's this wrapper's only job.
+//! `*const i64` raw pointers. Arrow's `Tensor` stores its shape and strides
+//! as `Vec<usize>` instead. The two layouts can't share storage, and
+//! arrow-rs's [`FFI_ArrowArray`] doesn't expose its `private_data` field, so
+//! there is no way to attach the converted i64 boxes to the embedded array.
+//! Something has to allocate the boxes and keep them alive for the duration
+//! of the kernel call — that's this wrapper's only job.
 //!
 //! Drop order matters: declaring `ffi` first means it's released first
 //! (firing the arrow C Data Interface release callback for the data
@@ -19,12 +19,14 @@
 //!
 //! The data buffer is *not* copied. `arrow::buffer::Buffer` is `Arc`-backed,
 //! so cloning it during the conversion just bumps a reference count. The
-//! wrapper and the original `Tensor` share the same backing memory; a
-//! kernel writing into the wrapper's FFI tensor mutates memory that's
-//! visible through the original `Tensor` once the kernel returns.
+//! wrapper and the producer share the same backing memory; a kernel writing
+//! into the wrapper's FFI tensor mutates memory that's visible through the
+//! producer-side `Buffer` once the kernel returns.
 
 use crate::device_tensor::{dtype, AmDeviceType, FFI_TensorArray};
+use crate::error::{KernelError, Result};
 use arrow::array::ArrayData;
+use arrow::buffer::Buffer;
 use arrow::datatypes::{ArrowPrimitiveType, DataType};
 use arrow::ffi::FFI_ArrowArray;
 use arrow::tensor::Tensor;
@@ -49,38 +51,53 @@ impl OwnedFFITensor {
     pub fn as_ffi_mut(&mut self) -> &mut FFI_TensorArray {
         &mut self.ffi
     }
-}
 
-impl<T: ArrowPrimitiveType> From<&Tensor<'_, T>> for OwnedFFITensor {
-    fn from(tensor: &Tensor<'_, T>) -> Self {
-        let shape_usize = tensor
-            .shape()
-            .cloned()
-            .expect("OwnedFFITensor: tensor has no shape (0-d scalar tensors not supported)");
-        let strides_usize = tensor
-            .strides()
-            .cloned()
-            .expect("OwnedFFITensor: tensor has no strides");
+    /// Build an `OwnedFFITensor` from an owned arrow [`Buffer`] plus explicit
+    /// tensor metadata.
+    ///
+    /// The buffer is moved into the embedded [`FFI_ArrowArray`] (which clones
+    /// its underlying `Arc` internally). Callers who want to recover the
+    /// original allocation via [`Buffer::into_vec`] after the kernel writes
+    /// should hold their own clone of the buffer and drop this wrapper
+    /// before attempting the recovery.
+    pub fn from_buffer(
+        buf: Buffer,
+        data_type: &DataType,
+        shape: &[usize],
+        strides: &[usize],
+    ) -> Result<Self> {
+        if shape.is_empty() {
+            return Err(KernelError::InvalidArgument(
+                "OwnedFFITensor: 0-d scalar tensors are not supported".to_string(),
+            ));
+        }
+        if strides.len() != shape.len() {
+            return Err(KernelError::InvalidArgument(format!(
+                "OwnedFFITensor: strides len {} != shape len {}",
+                strides.len(),
+                shape.len()
+            )));
+        }
 
-        let shape: Box<[i64]> = shape_usize.iter().map(|&d| d as i64).collect();
-        let strides: Box<[i64]> = strides_usize.iter().map(|&s| s as i64).collect();
-        let ndim = shape.len() as i32;
-        let dtype_code = am_dtype_code(&T::DATA_TYPE);
-        let total_len: usize = shape_usize.iter().product();
+        let dtype_code = am_dtype_code(data_type)?;
+        let shape_box: Box<[i64]> = shape.iter().map(|&d| d as i64).collect();
+        let strides_box: Box<[i64]> = strides.iter().map(|&s| s as i64).collect();
+        let ndim = shape_box.len() as i32;
+        let total_len: usize = shape.iter().product();
 
-        let array_data = ArrayData::builder(T::DATA_TYPE)
+        let array_data = ArrayData::builder(data_type.clone())
             .len(total_len)
-            .add_buffer(tensor.data().clone())
+            .add_buffer(buf)
             .build()
-            .expect("ArrayData::build for primitive tensor");
+            .map_err(KernelError::from)?;
         let array = FFI_ArrowArray::new(&array_data);
 
         let ffi = FFI_TensorArray {
             array,
             dtype: dtype_code,
             ndim,
-            shape: shape.as_ptr(),
-            strides: strides.as_ptr(),
+            shape: shape_box.as_ptr(),
+            strides: strides_box.as_ptr(),
             device_type: AmDeviceType::Cpu as i32,
             _pad: 0,
             device_id: -1,
@@ -88,23 +105,74 @@ impl<T: ArrowPrimitiveType> From<&Tensor<'_, T>> for OwnedFFITensor {
             reserved: [0; 3],
         };
 
-        OwnedFFITensor {
+        Ok(OwnedFFITensor {
             ffi,
-            _shape: shape,
-            _strides: strides,
-        }
+            _shape: shape_box,
+            _strides: strides_box,
+        })
     }
+}
+
+impl<T: ArrowPrimitiveType> TryFrom<&Tensor<'_, T>> for OwnedFFITensor {
+    type Error = KernelError;
+
+    fn try_from(tensor: &Tensor<'_, T>) -> Result<Self> {
+        let shape = tensor.shape().ok_or_else(|| {
+            KernelError::InvalidArgument(
+                "OwnedFFITensor: tensor has no shape (0-d scalar tensors not supported)"
+                    .to_string(),
+            )
+        })?;
+
+        // Arrow Tensor strides are optional even when shape is set. Fall back
+        // to computing row-major byte strides from the shape so callers with
+        // a sanely-constructed row-major tensor don't have to care.
+        let fallback_strides;
+        let strides: &[usize] = match tensor.strides() {
+            Some(s) => s.as_slice(),
+            None => {
+                let elem_size = T::DATA_TYPE.primitive_width().ok_or_else(|| {
+                    KernelError::InvalidArgument(format!(
+                        "OwnedFFITensor: dtype {:?} has no fixed element width",
+                        T::DATA_TYPE
+                    ))
+                })?;
+                fallback_strides = row_major_byte_strides(shape.as_slice(), elem_size);
+                &fallback_strides
+            }
+        };
+
+        OwnedFFITensor::from_buffer(
+            tensor.data().clone(),
+            &T::DATA_TYPE,
+            shape.as_slice(),
+            strides,
+        )
+    }
+}
+
+/// Compute row-major byte strides for a dense tensor with the given shape
+/// and element size.
+fn row_major_byte_strides(shape: &[usize], elem_size: usize) -> Vec<usize> {
+    let mut strides = vec![0usize; shape.len()];
+    if shape.is_empty() {
+        return strides;
+    }
+    strides[shape.len() - 1] = elem_size;
+    for i in (0..shape.len() - 1).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
 }
 
 /// Map an arrow `DataType` to its `dtype::*` integer code on the v2 ABI.
 ///
-/// Panics on unsupported data types. The supported set covers every
-/// numeric primitive arrow exposes; non-numeric types (Date/Time/Interval/
-/// Decimal/Boolean) are intentionally not mapped because ML kernels do
-/// not consume them and the panic message will surface the gap clearly
-/// if a future caller passes one.
-fn am_dtype_code(data_type: &DataType) -> i32 {
-    match data_type {
+/// Returns [`KernelError::InvalidArgument`] for types that aren't one of the
+/// numeric primitives ML kernels consume (Date/Time/Interval/Decimal/Boolean
+/// and composite types). Falls through to an error rather than panicking so
+/// callers can fall back to a CPU implementation or surface a clean failure.
+fn am_dtype_code(data_type: &DataType) -> Result<i32> {
+    Ok(match data_type {
         DataType::Int8 => dtype::INT8,
         DataType::Int16 => dtype::INT16,
         DataType::Int32 => dtype::INT32,
@@ -116,8 +184,12 @@ fn am_dtype_code(data_type: &DataType) -> i32 {
         DataType::Float16 => dtype::FLOAT16,
         DataType::Float32 => dtype::FLOAT32,
         DataType::Float64 => dtype::FLOAT64,
-        other => panic!("OwnedFFITensor: unsupported arrow DataType {other:?}"),
-    }
+        other => {
+            return Err(KernelError::InvalidArgument(format!(
+                "OwnedFFITensor: unsupported arrow DataType {other:?}"
+            )))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -133,7 +205,7 @@ mod tests {
         let tensor =
             Tensor::<Float32Type>::new_row_major(buf, Some(vec![3, 4]), None).unwrap();
 
-        let owned = OwnedFFITensor::from(&tensor);
+        let owned = OwnedFFITensor::try_from(&tensor).unwrap();
         let ffi = owned.as_ffi();
 
         assert_eq!(ffi.dtype, dtype::FLOAT32);
@@ -159,7 +231,38 @@ mod tests {
         let tensor =
             Tensor::<Int8Type>::new_row_major(buf, Some(vec![2, 3]), None).unwrap();
 
-        let owned = OwnedFFITensor::from(&tensor);
+        let owned = OwnedFFITensor::try_from(&tensor).unwrap();
         assert_eq!(owned.as_ffi().dtype, dtype::INT8);
+    }
+
+    #[test]
+    fn from_buffer_direct() {
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let buf = Buffer::from_vec(data.clone());
+
+        let owned = OwnedFFITensor::from_buffer(
+            buf,
+            &DataType::Float32,
+            &[2, 3],
+            &row_major_byte_strides(&[2, 3], 4),
+        )
+        .unwrap();
+
+        let ffi = owned.as_ffi();
+        assert_eq!(ffi.ndim, 2);
+        assert_eq!(ffi.dtype, dtype::FLOAT32);
+
+        let shape = unsafe { std::slice::from_raw_parts(ffi.shape, 2) };
+        assert_eq!(shape, &[2i64, 3]);
+
+        let read_back =
+            unsafe { std::slice::from_raw_parts(ffi.array.buffer(1) as *const f32, 6) };
+        assert_eq!(read_back, data.as_slice());
+    }
+
+    #[test]
+    fn unsupported_dtype_returns_error() {
+        let err = am_dtype_code(&DataType::Boolean).unwrap_err();
+        assert!(matches!(err, KernelError::InvalidArgument(_)));
     }
 }

@@ -221,11 +221,11 @@ impl MatmulKernel {
 
     /// Run one matmul.
     ///
-    /// `a`, `b`, `c` must all be rank-2 row-major f32 tensors. The CPU
-    /// device path host-stages from the tensor's `array.buffer(1)`
-    /// pointer into the cached MTLBuffer. (The Metal device path — using
-    /// MTLBuffer-backed tensors directly — is not implemented in v2;
-    /// linalg always passes CPU tensors.)
+    /// `a`, `b`, `c` must all be rank-2 row-major f32 tensors living on
+    /// the CPU device. The kernel host-stages from each tensor's
+    /// `array.buffer(1)` pointer into cached MTLBuffers. True Metal-device
+    /// tensors are rejected up in `am_matmul_invoke` before reaching this
+    /// function.
     ///
     /// # Safety
     ///

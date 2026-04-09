@@ -76,15 +76,16 @@ pub extern "C" fn am_last_error_message() -> *const c_char {
 // ---------------------------------------------------------------------------
 
 /// Returns 1 if the Metal matmul kernel can handle this `(dtype, device)`
-/// combination, 0 otherwise. The Metal MSL backend is f32-only and accepts
-/// either CPU tensors (host-staged into MTLBuffers internally) or Metal
-/// device tensors. f64 is intentionally unsupported because Metal MSL has
-/// no `double` type.
+/// combination, 0 otherwise. The Metal MSL backend is f32-only and in v2
+/// accepts only CPU-resident tensors — the kernel host-stages the input
+/// data into MTLBuffers internally. True Metal-device tensors (i.e.
+/// tensors whose buffer is already an MTLBuffer) are not yet handled, so
+/// they are intentionally rejected here to avoid reading host pointers
+/// that don't exist. f64 is intentionally unsupported because Metal MSL
+/// has no `double` type.
 #[no_mangle]
 pub extern "C" fn am_matmul_supports(dtype_code: i32, device_type: i32) -> i32 {
-    let cpu = AmDeviceType::Cpu as i32;
-    let metal_dev = AmDeviceType::Metal as i32;
-    if dtype_code == dtype::FLOAT32 && (device_type == cpu || device_type == metal_dev) {
+    if dtype_code == dtype::FLOAT32 && device_type == AmDeviceType::Cpu as i32 {
         1
     } else {
         0
@@ -115,11 +116,10 @@ pub unsafe extern "C" fn am_matmul_open(
         ));
         return AM_ERR_UNSUPPORTED_DTYPE;
     }
-    let cpu = AmDeviceType::Cpu as i32;
-    let metal_dev = AmDeviceType::Metal as i32;
-    if device_type != cpu && device_type != metal_dev {
+    if device_type != AmDeviceType::Cpu as i32 {
         set_last_error(format!(
-            "metal matmul: unsupported device {device_type} (only CPU or Metal)"
+            "metal matmul: unsupported device {device_type} \
+             (only CPU tensors; Metal-device tensors are not yet implemented)"
         ));
         return AM_ERR_DEVICE_MISMATCH;
     }
@@ -163,6 +163,18 @@ pub unsafe extern "C" fn am_matmul_invoke(
     let a_ref = unsafe { &*a };
     let b_ref = unsafe { &*b };
     let c_ref = unsafe { &mut *c };
+
+    // Reject any tensor whose device doesn't match what this kernel knows
+    // how to read. The v2 Metal matmul host-stages from `array.buffer(1)`,
+    // which is only well-defined for CPU-resident tensors.
+    let cpu = AmDeviceType::Cpu as i32;
+    if a_ref.device_type != cpu || b_ref.device_type != cpu || c_ref.device_type != cpu {
+        set_last_error(format!(
+            "metal matmul: all tensors must be on CPU device (got {}/{}/{})",
+            a_ref.device_type, b_ref.device_type, c_ref.device_type
+        ));
+        return AM_ERR_DEVICE_MISMATCH;
+    }
 
     match unsafe { kernel.invoke(a_ref, b_ref, c_ref) } {
         Ok(()) => {

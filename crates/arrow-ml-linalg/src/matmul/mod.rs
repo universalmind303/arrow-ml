@@ -86,18 +86,18 @@ fn matmul_f32(
 /// backend errored out — caller is expected to fall through to SIMD.
 ///
 /// Uses a thread-local handle cache so the kernel is opened once per thread
-/// and amortized across many invocations.
+/// and amortized across many invocations. The output is written directly
+/// into a freshly-allocated `Vec<f32>`: we wrap it in a `Buffer`, pass a
+/// clone to the FFI wrapper, and reclaim the underlying `Vec` via
+/// [`Buffer::into_vec`] once the wrapper has been dropped.
 fn try_backend_matmul_f32(
     a: &Tensor<'_, Float32Type>,
     b: &Tensor<'_, Float32Type>,
     m: usize,
     n: usize,
 ) -> Option<Vec<f32>> {
-    let backend: &'static Backend = BackendRegistry::global().best_matmul()?;
-    let ops = backend.matmul.as_ref()?;
-    if !ops.supports_dtype(dtype::FLOAT32, AmDeviceType::Cpu as i32) {
-        return None;
-    }
+    let backend: &'static Backend =
+        BackendRegistry::global().best_matmul_for(dtype::FLOAT32, AmDeviceType::Cpu as i32)?;
 
     MATMUL_F32_KERNEL.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -109,15 +109,23 @@ fn try_backend_matmul_f32(
         }
         let kernel = slot.as_ref().expect("just-initialized");
 
-        let a_ffi = OwnedFFITensor::from(a);
-        let b_ffi = OwnedFFITensor::from(b);
+        let a_ffi = OwnedFFITensor::try_from(a).ok()?;
+        let b_ffi = OwnedFFITensor::try_from(b).ok()?;
 
-        // Pre-allocate output as a Buffer-backed Tensor so we can hand the
-        // kernel an FFI tensor whose buffer it writes into directly.
+        // Allocate the output as a `Buffer` over a freshly-owned `Vec<f32>`.
+        // The FFI wrapper clones the buffer's `Arc` (refcount becomes 2);
+        // after the kernel writes and we drop the wrapper, `out_buf` is the
+        // sole owner again and we can reclaim the `Vec` without copying.
         let out_buf = Buffer::from_vec(vec![0.0f32; m * n]);
-        let out_tensor = Tensor::<Float32Type>::new_row_major(out_buf, Some(vec![m, n]), None)
-            .expect("output tensor construction");
-        let mut out_ffi = OwnedFFITensor::from(&out_tensor);
+        let shape = [m, n];
+        let strides = [n * std::mem::size_of::<f32>(), std::mem::size_of::<f32>()];
+        let mut out_ffi = OwnedFFITensor::from_buffer(
+            out_buf.clone(),
+            &DataType::Float32,
+            &shape,
+            &strides,
+        )
+        .ok()?;
 
         let invoke_result =
             unsafe { kernel.invoke(a_ffi.as_ffi(), b_ffi.as_ffi(), out_ffi.as_ffi_mut()) };
@@ -126,7 +134,15 @@ fn try_backend_matmul_f32(
             return None;
         }
 
-        Some(out_tensor.data().typed_data::<f32>().to_vec())
+        // Happy path: `out_buf` is uniquely owned, so `into_vec` succeeds
+        // without allocating or copying. If for any reason the refcount is
+        // still >1 (shouldn't happen on this path), fall back to a copy so
+        // we don't silently drop the kernel's result.
+        Some(
+            out_buf
+                .into_vec::<f32>()
+                .unwrap_or_else(|b| b.typed_data::<f32>().to_vec()),
+        )
     })
 }
 
@@ -168,20 +184,16 @@ fn naive_gemm_64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64>
 
 fn gemm_f64(a: &[f64], b: &[f64], m: usize, k: usize, n: usize) -> Vec<f64> {
     // GPU branch: probe for f64 support before paying the open/dispatch cost.
-    // The Metal backend reports `supports_dtype(FLOAT64, _) == 0` so on
-    // macOS this short-circuits straight to SIMD with no open call.
-    if m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD {
-        if let Some(backend) = BackendRegistry::global().best_matmul() {
-            if let Some(ops) = backend.matmul.as_ref() {
-                if ops.supports_dtype(dtype::FLOAT64, AmDeviceType::Cpu as i32) {
-                    // No backend currently exports f64 matmul; this branch
-                    // is plumbing for when one does. Skip silently —
-                    // implementation lands with the first f64-capable
-                    // backend.
-                    let _ = (a, b, m, k, n);
-                }
-            }
-        }
+    // The Metal backend reports no support for FLOAT64 so on macOS this
+    // short-circuits straight to SIMD with no open call. No backend
+    // currently exports f64 matmul; this probe is plumbing for when one
+    // does — implementation lands with the first f64-capable backend.
+    if (m >= GPU_THRESHOLD || n >= GPU_THRESHOLD || k >= GPU_THRESHOLD)
+        && BackendRegistry::global()
+            .best_matmul_for(dtype::FLOAT64, AmDeviceType::Cpu as i32)
+            .is_some()
+    {
+        let _ = (a, b, m, k, n);
     }
 
     if m >= SIMD_THRESHOLD || n >= SIMD_THRESHOLD || k >= SIMD_THRESHOLD {
