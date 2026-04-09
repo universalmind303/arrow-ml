@@ -119,13 +119,9 @@ fn try_backend_matmul_f32(
         let out_buf = Buffer::from_vec(vec![0.0f32; m * n]);
         let shape = [m, n];
         let strides = [n * std::mem::size_of::<f32>(), std::mem::size_of::<f32>()];
-        let mut out_ffi = OwnedFFITensor::from_buffer(
-            out_buf.clone(),
-            &DataType::Float32,
-            &shape,
-            &strides,
-        )
-        .ok()?;
+        let mut out_ffi =
+            OwnedFFITensor::from_buffer(out_buf.clone(), &DataType::Float32, &shape, &strides)
+                .ok()?;
 
         let invoke_result =
             unsafe { kernel.invoke(a_ffi.as_ffi(), b_ffi.as_ffi(), out_ffi.as_ffi_mut()) };

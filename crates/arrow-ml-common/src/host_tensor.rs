@@ -202,8 +202,7 @@ mod tests {
     fn from_f32_tensor_round_trip() {
         let data: Vec<f32> = (0..12).map(|i| i as f32).collect();
         let buf = ScalarBuffer::<f32>::from(data.clone()).into_inner();
-        let tensor =
-            Tensor::<Float32Type>::new_row_major(buf, Some(vec![3, 4]), None).unwrap();
+        let tensor = Tensor::<Float32Type>::new_row_major(buf, Some(vec![3, 4]), None).unwrap();
 
         let owned = OwnedFFITensor::try_from(&tensor).unwrap();
         let ffi = owned.as_ffi();
@@ -228,8 +227,7 @@ mod tests {
     fn from_i8_tensor_dtype_code() {
         let data: Vec<i8> = (0..6).collect();
         let buf = ScalarBuffer::<i8>::from(data).into_inner();
-        let tensor =
-            Tensor::<Int8Type>::new_row_major(buf, Some(vec![2, 3]), None).unwrap();
+        let tensor = Tensor::<Int8Type>::new_row_major(buf, Some(vec![2, 3]), None).unwrap();
 
         let owned = OwnedFFITensor::try_from(&tensor).unwrap();
         assert_eq!(owned.as_ffi().dtype, dtype::INT8);
@@ -255,8 +253,7 @@ mod tests {
         let shape = unsafe { std::slice::from_raw_parts(ffi.shape, 2) };
         assert_eq!(shape, &[2i64, 3]);
 
-        let read_back =
-            unsafe { std::slice::from_raw_parts(ffi.array.buffer(1) as *const f32, 6) };
+        let read_back = unsafe { std::slice::from_raw_parts(ffi.array.buffer(1) as *const f32, 6) };
         assert_eq!(read_back, data.as_slice());
     }
 

@@ -40,11 +40,8 @@ pub type AmMatmulSupportsFn = unsafe extern "C" fn(dtype: i32, device_type: i32)
 /// On success, writes `*out_handle` and returns `AM_OK`. On failure
 /// (unsupported dtype, OOM, etc.), writes NULL and returns a negative
 /// error code.
-pub type AmMatmulOpenFn = unsafe extern "C" fn(
-    dtype: i32,
-    device_type: i32,
-    out_handle: *mut *mut AmMatmulKernel,
-) -> i32;
+pub type AmMatmulOpenFn =
+    unsafe extern "C" fn(dtype: i32, device_type: i32, out_handle: *mut *mut AmMatmulKernel) -> i32;
 
 /// Compute `c = a @ b`.
 ///
