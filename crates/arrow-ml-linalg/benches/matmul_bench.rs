@@ -90,8 +90,20 @@ fn bench_matmul_f32_square(c: &mut Criterion) {
                     let mut c = vec![0.0f32; s * s];
                     unsafe {
                         matrixmultiply::sgemm(
-                            s, s, s, 1.0, a_data.as_ptr(), s as isize, 1, b_data.as_ptr(),
-                            s as isize, 1, 0.0, c.as_mut_ptr(), s as isize, 1,
+                            s,
+                            s,
+                            s,
+                            1.0,
+                            a_data.as_ptr(),
+                            s as isize,
+                            1,
+                            b_data.as_ptr(),
+                            s as isize,
+                            1,
+                            0.0,
+                            c.as_mut_ptr(),
+                            s as isize,
+                            1,
                         );
                     }
                     c
@@ -133,8 +145,20 @@ fn bench_matmul_f64_square(c: &mut Criterion) {
                     let mut c = vec![0.0f64; s * s];
                     unsafe {
                         matrixmultiply::dgemm(
-                            s, s, s, 1.0, a_data.as_ptr(), s as isize, 1, b_data.as_ptr(),
-                            s as isize, 1, 0.0, c.as_mut_ptr(), s as isize, 1,
+                            s,
+                            s,
+                            s,
+                            1.0,
+                            a_data.as_ptr(),
+                            s as isize,
+                            1,
+                            b_data.as_ptr(),
+                            s as isize,
+                            1,
+                            0.0,
+                            c.as_mut_ptr(),
+                            s as isize,
+                            1,
                         );
                     }
                     c
