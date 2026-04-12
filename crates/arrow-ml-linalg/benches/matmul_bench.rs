@@ -1,24 +1,25 @@
 use arrow::buffer::{Buffer, ScalarBuffer};
 use arrow::datatypes::{Float32Type, Float64Type};
-use arrow::tensor::Tensor;
+use arrow::tensor::Tensor as ArrowTensor;
+use arrow_ml_core::tensor::Tensor;
 use arrow_ml_linalg::matmul::matmul;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use ndarray::Array2;
 
-fn make_f32_tensor(rows: usize, cols: usize) -> Tensor<'static, Float32Type> {
+fn make_f32_tensor(rows: usize, cols: usize) -> ArrowTensor<'static, Float32Type> {
     let data: Vec<f32> = (0..rows * cols)
         .map(|i| ((i % 100) as f32) * 0.01)
         .collect();
     let buffer = Buffer::from(data);
-    Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
+    ArrowTensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
 }
 
-fn make_f64_tensor(rows: usize, cols: usize) -> Tensor<'static, Float64Type> {
+fn make_f64_tensor(rows: usize, cols: usize) -> ArrowTensor<'static, Float64Type> {
     let data: Vec<f64> = (0..rows * cols)
         .map(|i| ((i % 100) as f64) * 0.01)
         .collect();
     let buffer = ScalarBuffer::<f64>::from(data).into_inner();
-    Tensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
+    ArrowTensor::new_row_major(buffer, Some(vec![rows, cols]), None).unwrap()
 }
 
 /// Naive triple-loop matmul for baseline comparison.
@@ -38,8 +39,8 @@ fn naive_matmul_f32(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f
 fn bench_simd_vs_naive_f32(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_vs_naive_f32");
     for &size in &[32, 64, 128, 256, 512] {
-        let a_tensor = make_f32_tensor(size, size);
-        let b_tensor = make_f32_tensor(size, size);
+        let a_tensor: Tensor = make_f32_tensor(size, size).into();
+        let b_tensor: Tensor = make_f32_tensor(size, size).into();
 
         let a_data: Vec<f32> = (0..size * size)
             .map(|i| ((i % 100) as f32) * 0.01)
@@ -62,8 +63,8 @@ fn bench_simd_vs_naive_f32(c: &mut Criterion) {
 fn bench_matmul_f32_square(c: &mut Criterion) {
     let mut group = c.benchmark_group("matmul_f32_square");
     for &size in &[16, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
-        let a = make_f32_tensor(size, size);
-        let b = make_f32_tensor(size, size);
+        let a: Tensor = make_f32_tensor(size, size).into();
+        let b: Tensor = make_f32_tensor(size, size).into();
 
         let a_data: Vec<f32> = (0..size * size)
             .map(|i| ((i % 100) as f32) * 0.01)
@@ -117,8 +118,8 @@ fn bench_matmul_f32_square(c: &mut Criterion) {
 fn bench_matmul_f64_square(c: &mut Criterion) {
     let mut group = c.benchmark_group("matmul_f64_square");
     for &size in &[16, 32, 64, 128, 256, 512] {
-        let a = make_f64_tensor(size, size);
-        let b = make_f64_tensor(size, size);
+        let a: Tensor = make_f64_tensor(size, size).into();
+        let b: Tensor = make_f64_tensor(size, size).into();
 
         let a_data: Vec<f64> = (0..size * size)
             .map(|i| ((i % 100) as f64) * 0.01)

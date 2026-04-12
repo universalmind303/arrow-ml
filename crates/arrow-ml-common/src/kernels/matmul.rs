@@ -12,9 +12,10 @@
 //! support matmul.
 
 use crate::backend::{Backend, AM_OK};
-use crate::device_tensor::FFI_TensorArray;
+use crate::device_tensor::FFI_DeviceTensor;
 use crate::error::{KernelError, Result};
 use libloading::Library;
+use std::sync::Arc;
 
 /// Opaque matmul kernel handle.
 ///
@@ -54,9 +55,9 @@ pub type AmMatmulOpenFn =
 /// Synchronous in v2 — when this returns `AM_OK`, `c` is ready to read.
 pub type AmMatmulInvokeFn = unsafe extern "C" fn(
     handle: *mut AmMatmulKernel,
-    a: *const FFI_TensorArray,
-    b: *const FFI_TensorArray,
-    c: *mut FFI_TensorArray,
+    a: *const FFI_DeviceTensor,
+    b: *const FFI_DeviceTensor,
+    c: *mut FFI_DeviceTensor,
 ) -> i32;
 
 /// Destroy a matmul kernel handle. Frees backend-owned resources (cached
@@ -111,31 +112,21 @@ impl MatmulOps {
 /// Created by [`MatmulKernel::open`], destroyed automatically on drop via
 /// the backend's `am_matmul_close`. Holds a borrow of the [`Backend`] so
 /// the dynamic library stays loaded for the kernel handle's lifetime.
-pub struct MatmulKernel<'b> {
-    ops: &'b MatmulOps,
+pub struct MatmulKernel {
+    ops: MatmulOps,
     handle: *mut AmMatmulKernel,
-    backend: &'b Backend,
+    backend: Arc<Backend>,
 }
 
-// SAFETY: the kernel handle is an opaque pointer into a loaded shared
-// library; the function pointers are Send+Sync as established on `MatmulOps`,
-// and the `Backend` reference keeps the library alive. The kernel itself
-// is single-owner (no aliasing) so `Send` is sound. We do not implement
-// `Sync` because the backend may store mutable per-handle state (cached
-// buffers, etc.) without internal synchronization.
-unsafe impl Send for MatmulKernel<'_> {}
+unsafe impl Send for MatmulKernel {}
 
-impl<'b> MatmulKernel<'b> {
-    /// Open a matmul kernel against this backend's matmul ops.
-    ///
-    /// Returns [`KernelError::Unsupported`] if the backend doesn't export
-    /// the matmul symbol family at all.
-    pub fn open(backend: &'b Backend, dtype: i32, device_type: i32) -> Result<Self> {
-        let ops = backend.matmul.as_ref().ok_or(KernelError::Unsupported)?;
+impl MatmulKernel {
+    pub fn open(backend: Arc<Backend>, dtype: i32, device_type: i32) -> Result<Self> {
+        let ops = backend.matmul.ok_or(KernelError::Unsupported)?;
         let mut handle: *mut AmMatmulKernel = std::ptr::null_mut();
         let rc = unsafe { (ops.open)(dtype, device_type, &mut handle) };
         if rc != AM_OK || handle.is_null() {
-            return Err(KernelError::from_code(rc, backend));
+            return Err(KernelError::from_code(rc, &backend));
         }
         Ok(MatmulKernel {
             ops,
@@ -144,40 +135,33 @@ impl<'b> MatmulKernel<'b> {
         })
     }
 
-    /// Invoke the kernel with the given tensors.
-    ///
-    /// All three tensors must be rank-2 with shapes `[m, k]`, `[k, n]`,
-    /// `[m, n]` respectively, and must match the dtype/device the kernel
-    /// was opened with. The output tensor `c` must be pre-allocated by
-    /// the caller.
-    ///
     /// # Safety
     ///
     /// The caller asserts that the underlying buffers behind `a`, `b`, and
     /// `c` are valid for the duration of the call and that the FFI tensor
-    /// metadata (shape, strides, dtype, device) accurately describes them.
+    /// metadata accurately describes them.
     pub unsafe fn invoke(
         &self,
-        a: &FFI_TensorArray,
-        b: &FFI_TensorArray,
-        c: &mut FFI_TensorArray,
+        a: &FFI_DeviceTensor,
+        b: &FFI_DeviceTensor,
+        c: &mut FFI_DeviceTensor,
     ) -> Result<()> {
         let rc = unsafe {
             (self.ops.invoke)(
                 self.handle,
-                a as *const FFI_TensorArray,
-                b as *const FFI_TensorArray,
-                c as *mut FFI_TensorArray,
+                a as *const FFI_DeviceTensor,
+                b as *const FFI_DeviceTensor,
+                c as *mut FFI_DeviceTensor,
             )
         };
         if rc != AM_OK {
-            return Err(KernelError::from_code(rc, self.backend));
+            return Err(KernelError::from_code(rc, &self.backend));
         }
         Ok(())
     }
 }
 
-impl Drop for MatmulKernel<'_> {
+impl Drop for MatmulKernel {
     fn drop(&mut self) {
         unsafe { (self.ops.close)(self.handle) }
     }

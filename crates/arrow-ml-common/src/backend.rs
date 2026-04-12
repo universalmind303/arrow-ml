@@ -8,6 +8,7 @@
 //! families. Each kernel has its own four-symbol family
 //! (`am_<kernel>_supports/open/invoke/close`) loaded as a unit.
 
+use crate::kernels::device::{AmDeviceAllocFn, AmDeviceCopyFn, AmDeviceFreeFn};
 use crate::kernels::matmul::MatmulOps;
 use std::ffi::c_char;
 
@@ -86,6 +87,15 @@ pub struct Backend {
     /// Optional thread-local last-error retrieval, if the backend exports it.
     pub last_error: Option<AmLastErrorFn>,
 
+    // ===== required device memory ABI =====
+    /// Allocate device-resident memory. Required.
+    pub device_alloc: AmDeviceAllocFn,
+    /// Free a device allocation. Required.
+    pub device_free: AmDeviceFreeFn,
+    /// Copy memory between device locations (host/device, device/host,
+    /// device/device). Required.
+    pub device_copy: AmDeviceCopyFn,
+
     // ===== per-kernel vtables =====
     /// Matmul kernel vtable, if the backend exports the full
     /// `am_matmul_*` symbol family.
@@ -156,6 +166,42 @@ impl Backend {
                 .map(|s| *s)
         };
 
+        // Required device memory ABI — backend is rejected entirely if any
+        // is missing. Device ops are infrastructure, not a kernel family.
+        let device_alloc: AmDeviceAllocFn =
+            match unsafe { lib.get::<AmDeviceAllocFn>(b"am_device_alloc\0") } {
+                Ok(s) => *s,
+                Err(_) => {
+                    eprintln!(
+                        "[arrow-ml] backend at {} is missing am_device_alloc — skipping",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+        let device_free: AmDeviceFreeFn =
+            match unsafe { lib.get::<AmDeviceFreeFn>(b"am_device_free\0") } {
+                Ok(s) => *s,
+                Err(_) => {
+                    eprintln!(
+                        "[arrow-ml] backend at {} is missing am_device_free — skipping",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+        let device_copy: AmDeviceCopyFn =
+            match unsafe { lib.get::<AmDeviceCopyFn>(b"am_device_copy\0") } {
+                Ok(s) => *s,
+                Err(_) => {
+                    eprintln!(
+                        "[arrow-ml] backend at {} is missing am_device_copy — skipping",
+                        path.display()
+                    );
+                    return None;
+                }
+            };
+
         // Per-kernel vtables — each loads as an all-or-nothing unit.
         let matmul = MatmulOps::load(&lib);
 
@@ -165,6 +211,9 @@ impl Backend {
             priority,
             device_type,
             last_error,
+            device_alloc,
+            device_free,
+            device_copy,
             matmul,
         })
     }

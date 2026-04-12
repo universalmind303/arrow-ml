@@ -15,10 +15,11 @@
 //! highest-priority backend that exports a given kernel's symbol family.
 
 use crate::backend::Backend;
+use crate::device_tensor::AmDeviceType;
 use crate::manifest::BackendManifest;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Per-user backend directory:
 /// - Unix: `$HOME/.arrow-ml/backends`
@@ -49,7 +50,7 @@ fn dylib_glob_pattern() -> &'static str {
 static REGISTRY: OnceLock<BackendRegistry> = OnceLock::new();
 
 pub struct BackendRegistry {
-    backends: Vec<Backend>,
+    backends: Vec<Arc<Backend>>,
 }
 
 impl BackendRegistry {
@@ -60,7 +61,7 @@ impl BackendRegistry {
 
     /// Scan the search paths, load every valid backend, sort by priority.
     fn discover() -> BackendRegistry {
-        let mut backends = Vec::new();
+        let mut backends: Vec<Arc<Backend>> = Vec::new();
         let mut loaded_paths: HashSet<PathBuf> = HashSet::new();
 
         // 1. Manifest-driven discovery
@@ -95,7 +96,7 @@ impl BackendRegistry {
                         backend.priority,
                         manifest_path.display()
                     );
-                    backends.push(backend);
+                    backends.push(Arc::new(backend));
                 }
             }
         }
@@ -119,7 +120,7 @@ impl BackendRegistry {
                         backend.priority,
                         entry.display()
                     );
-                    backends.push(backend);
+                    backends.push(Arc::new(backend));
                 }
             }
         }
@@ -211,8 +212,8 @@ impl BackendRegistry {
     /// This does **not** check dtype/device support. Prefer
     /// [`BackendRegistry::best_matmul_for`] if you care which dtype and
     /// device the kernel needs to handle.
-    pub fn best_matmul(&self) -> Option<&Backend> {
-        self.backends.iter().find(|b| b.matmul.is_some())
+    pub fn best_matmul(&self) -> Option<Arc<Backend>> {
+        self.backends.iter().find(|b| b.matmul.is_some()).cloned()
     }
 
     /// Returns the highest-priority backend whose matmul kernel reports
@@ -222,11 +223,32 @@ impl BackendRegistry {
     /// Iterates through every loaded backend in priority order — so if the
     /// top-priority backend exports matmul but only supports a different
     /// dtype, the next backend is tried, and so on.
-    pub fn best_matmul_for(&self, dtype: i32, device_type: i32) -> Option<&Backend> {
-        self.backends.iter().find(|b| {
-            b.matmul
-                .as_ref()
-                .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
-        })
+    pub fn best_matmul_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
+        self.backends
+            .iter()
+            .find(|b| {
+                b.matmul
+                    .as_ref()
+                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+            })
+            .cloned()
+    }
+
+    /// Returns the highest-priority backend whose `device_type` matches
+    /// the requested device, or `None` if no loaded backend serves it.
+    ///
+    /// Repeated calls return the same `Arc<Backend>` (verifiable via
+    /// [`Arc::ptr_eq`]) — the underlying backend handle is interned in
+    /// the registry's storage and clones share the same allocation.
+    pub fn best_for_device(
+        &self,
+        device_type: AmDeviceType,
+        _device_id: i64,
+    ) -> Option<Arc<Backend>> {
+        let target = device_type as i32;
+        self.backends
+            .iter()
+            .find(|b| b.device_type == target)
+            .cloned()
     }
 }

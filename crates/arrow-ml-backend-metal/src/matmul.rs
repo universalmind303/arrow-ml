@@ -5,7 +5,7 @@
 //! dispatch ([`MatmulKernel::invoke`], called from `am_matmul_invoke`).
 //! The MSL source itself is unchanged from v1.
 
-use arrow_ml_common::device_tensor::FFI_TensorArray;
+use arrow_ml_common::device_tensor::FFI_DeviceTensor;
 use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
 };
@@ -229,13 +229,13 @@ impl MatmulKernel {
     ///
     /// # Safety
     ///
-    /// `a`, `b`, `c` must be valid `FFI_TensorArray`s with non-null
+    /// `a`, `b`, `c` must be valid `FFI_DeviceTensor`s with non-null
     /// `shape`/`strides` and a non-null data buffer at `array.buffer(1)`.
     pub unsafe fn invoke(
         &mut self,
-        a: &FFI_TensorArray,
-        b: &FFI_TensorArray,
-        c: &mut FFI_TensorArray,
+        a: &FFI_DeviceTensor,
+        b: &FFI_DeviceTensor,
+        c: &mut FFI_DeviceTensor,
     ) -> Result<(), String> {
         if a.dtype != self.dtype || b.dtype != self.dtype || c.dtype != self.dtype {
             return Err(format!(
@@ -279,8 +279,8 @@ impl MatmulKernel {
         let buf_b = self.buffers.buf_b.as_ref().expect("ensured");
         let buf_c = self.buffers.buf_c.as_ref().expect("ensured");
 
-        let a_data_ptr = a.array.buffer(1);
-        let b_data_ptr = b.array.buffer(1);
+        let a_data_ptr = a.buffer.data as *const u8;
+        let b_data_ptr = b.buffer.data as *const u8;
         if a_data_ptr.is_null() || b_data_ptr.is_null() {
             return Err("input tensor data buffer is null".to_string());
         }
@@ -325,7 +325,7 @@ impl MatmulKernel {
         cmd_buf.commit();
         cmd_buf.wait_until_completed();
 
-        let c_data_ptr = c.array.buffer(1) as *mut u8;
+        let c_data_ptr = c.buffer.data as *mut u8;
         if c_data_ptr.is_null() {
             return Err("output tensor data buffer is null".to_string());
         }

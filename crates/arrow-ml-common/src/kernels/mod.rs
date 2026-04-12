@@ -8,4 +8,5 @@
 //! There is intentionally no central kernel-name registry and no generic
 //! dispatch indirection — each kernel is its own typed entry point.
 
+pub mod device;
 pub mod matmul;

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/arrow-ml-common",
+    "crates/arrow-ml-core",
     "crates/arrow-ml-linalg",
     "crates/arrow-ml-activations",
     "crates/arrow-ml",
