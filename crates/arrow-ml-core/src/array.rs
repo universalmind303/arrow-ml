@@ -10,13 +10,13 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType};
 /// and an optional [`NullBuffer`] for validity (kept on host since bitmap
 /// ops don't need device placement).
 #[derive(Debug, Clone)]
-pub struct DeviceArray {
+pub struct Array {
     data_type: DataType,
     values: DeviceBuffer,
     nulls: Option<NullBuffer>,
 }
 
-impl DeviceArray {
+impl Array {
     pub fn new(data_type: DataType, values: DeviceBuffer, nulls: Option<NullBuffer>) -> Self {
         Self {
             data_type,
@@ -68,7 +68,7 @@ impl DeviceArray {
     }
 }
 
-impl<T: ArrowPrimitiveType> From<PrimitiveArray<T>> for DeviceArray {
+impl<T: ArrowPrimitiveType> From<PrimitiveArray<T>> for Array {
     fn from(arr: PrimitiveArray<T>) -> Self {
         let (data_type, values, nulls) = arr.into_parts();
         Self {
@@ -79,12 +79,12 @@ impl<T: ArrowPrimitiveType> From<PrimitiveArray<T>> for DeviceArray {
     }
 }
 
-impl<T: ArrowPrimitiveType> TryFrom<DeviceArray> for PrimitiveArray<T> {
+impl<T: ArrowPrimitiveType> TryFrom<Array> for PrimitiveArray<T> {
     type Error = DeviceError;
 
-    fn try_from(arr: DeviceArray) -> Result<Self> {
+    fn try_from(arr: Array) -> Result<Self> {
         let len = arr.len();
-        let DeviceArray { values, nulls, .. } = arr;
+        let Array { values, nulls, .. } = arr;
         let buffer: arrow::buffer::Buffer = values.try_into()?;
         let scalar = ScalarBuffer::new(buffer, 0, len);
         Ok(PrimitiveArray::new(scalar, nulls))
@@ -94,7 +94,7 @@ impl<T: ArrowPrimitiveType> TryFrom<DeviceArray> for PrimitiveArray<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Array, Float32Array, Int32Array};
+    use arrow::array::{Array as ArrowArray, Float32Array, Int32Array};
     use arrow::buffer::BooleanBuffer;
     use arrow::datatypes::{Float32Type, Int32Type};
 
@@ -106,7 +106,7 @@ mod tests {
     fn new_and_accessors() {
         let data = [1.0f32, 2.0, 3.0];
         let buf = host_buf(&data);
-        let arr = DeviceArray::new(DataType::Float32, buf, None);
+        let arr = Array::new(DataType::Float32, buf, None);
 
         assert_eq!(arr.data_type(), &DataType::Float32);
         assert_eq!(arr.device(), Device::Cpu);
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn len_without_nulls() {
         let buf = host_buf(&[1.0, 2.0, 3.0]);
-        let arr = DeviceArray::new(DataType::Float32, buf, None);
+        let arr = Array::new(DataType::Float32, buf, None);
         // Without nulls, len comes from buffer byte length
         assert_eq!(arr.len(), 3 * std::mem::size_of::<f32>());
     }
@@ -128,7 +128,7 @@ mod tests {
         let buf = host_buf(&[1.0, 2.0, 3.0]);
         let bools = BooleanBuffer::from(vec![true, false, true]);
         let nulls = NullBuffer::new(bools);
-        let arr = DeviceArray::new(DataType::Float32, buf, Some(nulls));
+        let arr = Array::new(DataType::Float32, buf, Some(nulls));
         // With nulls, len comes from NullBuffer::len()
         assert_eq!(arr.len(), 3);
         assert_eq!(arr.null_count(), 1);
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn empty_array() {
         let buf: DeviceBuffer = arrow::buffer::Buffer::from_vec(Vec::<f32>::new()).into();
-        let arr = DeviceArray::new(DataType::Float32, buf, None);
+        let arr = Array::new(DataType::Float32, buf, None);
         assert!(arr.is_empty());
         assert_eq!(arr.len(), 0);
         assert_eq!(arr.null_count(), 0);
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn from_primitive_array_no_nulls() {
         let arrow_arr = Int32Array::from(vec![10, 20, 30]);
-        let dev_arr = DeviceArray::from(arrow_arr);
+        let dev_arr = Array::from(arrow_arr);
 
         assert_eq!(dev_arr.data_type(), &DataType::Int32);
         assert_eq!(dev_arr.device(), Device::Cpu);
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn from_primitive_array_with_nulls() {
         let arrow_arr = Int32Array::from(vec![Some(1), None, Some(3)]);
-        let dev_arr = DeviceArray::from(arrow_arr);
+        let dev_arr = Array::from(arrow_arr);
 
         assert_eq!(dev_arr.data_type(), &DataType::Int32);
         assert!(dev_arr.nulls().is_some());
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn try_into_primitive_array_with_nulls_roundtrip() {
         let original = Int32Array::from(vec![Some(10), None, Some(30)]);
-        let dev_arr = DeviceArray::from(original.clone());
+        let dev_arr = Array::from(original.clone());
         let back: PrimitiveArray<Int32Type> = dev_arr.try_into().unwrap();
 
         assert_eq!(back.len(), 3);
@@ -186,28 +186,28 @@ mod tests {
         // but TryFrom uses it as element count in ScalarBuffer::new.
         // This roundtrip panics for any type wider than 1 byte.
         let original = Float32Array::from(vec![1.5, 2.5, 3.5]);
-        let dev_arr = DeviceArray::from(original);
+        let dev_arr = Array::from(original);
         let _: PrimitiveArray<Float32Type> = dev_arr.try_into().unwrap();
     }
 
     #[test]
     fn into_values() {
         let buf = host_buf(&[1.0, 2.0]);
-        let arr = DeviceArray::new(DataType::Float32, buf.clone(), None);
+        let arr = Array::new(DataType::Float32, buf.clone(), None);
         let extracted = arr.into_values();
         assert!(buf.ptr_eq(&extracted));
     }
 
     #[test]
     fn clone_shares_buffer() {
-        let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
+        let arr = Array::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
         let cloned = arr.clone();
         assert!(arr.values().ptr_eq(cloned.values()));
     }
 
     #[test]
     fn to_same_device_is_cheap() {
-        let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0]));
+        let arr = Array::from(Float32Array::from(vec![1.0, 2.0]));
         let moved = arr.to(Device::Cpu);
         assert!(arr.values().ptr_eq(moved.values()));
     }
@@ -227,7 +227,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
+        let arr = Array::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
         let device = arr.to(Device::metal(0));
 
         assert_ne!(arr.values().as_ptr(), device.values().as_ptr());
@@ -239,7 +239,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let device = DeviceArray::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
+        let device = Array::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
         assert_eq!(device.device(), Device::Metal(0));
     }
 
@@ -248,7 +248,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
+        let arr = Array::from(Float32Array::from(vec![1.0, 2.0, 3.0]));
         let device = arr.to(Device::metal(0));
 
         assert_eq!(device.data_type(), &DataType::Float32);
@@ -260,7 +260,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let device = DeviceArray::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
+        let device = Array::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
         assert!(device.values().typed_data::<f32>().is_err());
         assert!(device.values().as_slice().is_err());
     }
@@ -270,7 +270,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let arr = DeviceArray::from(Float32Array::from(vec![Some(1.0), None, Some(3.0)]));
+        let arr = Array::from(Float32Array::from(vec![Some(1.0), None, Some(3.0)]));
         let device = arr.to(Device::metal(0));
 
         assert_eq!(device.device(), Device::Metal(0));
@@ -291,7 +291,7 @@ mod tests {
             return;
         }
         let original = Float32Array::from(vec![Some(10.0), None, Some(30.0), None, Some(50.0)]);
-        let arr = DeviceArray::from(original);
+        let arr = Array::from(original);
         let back = arr.to(Device::metal(0)).to(Device::cpu());
 
         assert_eq!(back.device(), Device::Cpu);
@@ -315,7 +315,7 @@ mod tests {
             return;
         }
         let original = Float32Array::from(vec![1.0, 2.0, 3.0, 4.0]);
-        let arr = DeviceArray::from(original);
+        let arr = Array::from(original);
         let back_arr = arr.to(Device::metal(0)).to(Device::cpu());
 
         assert!(back_arr.nulls().is_none());
@@ -327,7 +327,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0]));
+        let arr = Array::from(Float32Array::from(vec![1.0, 2.0]));
         let back = arr.to(Device::metal(0)).to(Device::cpu());
 
         assert!(!arr.values().ptr_eq(back.values()));
@@ -338,7 +338,7 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let device = DeviceArray::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
+        let device = Array::from(Float32Array::from(vec![1.0])).to(Device::metal(0));
         let same = device.to(Device::metal(0));
 
         assert!(device.values().ptr_eq(same.values()));

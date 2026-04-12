@@ -6,7 +6,7 @@ use arrow::datatypes::{DataType, Float32Type};
 use arrow::tensor::Tensor as ArrowTensor;
 use arrow_ml_common::device_tensor::AmDeviceType;
 use arrow_ml_common::BackendRegistry;
-use arrow_ml_core::array::DeviceArray;
+use arrow_ml_core::array::Array;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
 use arrow_ml_core::tensor::Tensor;
@@ -231,7 +231,7 @@ fn buffer_metal_clone_across_threads() {
 #[test]
 fn array_roundtrip_no_nulls() {
     require_metal();
-    let arr = DeviceArray::from(Float32Array::from(vec![1.0, 2.0, 3.0, 4.0]));
+    let arr = Array::from(Float32Array::from(vec![1.0, 2.0, 3.0, 4.0]));
     assert_eq!(arr.device(), Device::Cpu);
 
     let metal_arr = arr.to(Device::metal(0));
@@ -249,7 +249,7 @@ fn array_roundtrip_no_nulls() {
 #[test]
 fn array_roundtrip_with_nulls() {
     require_metal();
-    let arr = DeviceArray::from(Int32Array::from(vec![
+    let arr = Array::from(Int32Array::from(vec![
         Some(10),
         None,
         Some(30),
@@ -274,7 +274,7 @@ fn array_roundtrip_with_nulls() {
 #[test]
 fn array_metal_preserves_data_type() {
     require_metal();
-    let arr = DeviceArray::from(Float32Array::from(vec![1.0]));
+    let arr = Array::from(Float32Array::from(vec![1.0]));
     let metal_arr = arr.to(Device::metal(0));
     assert_eq!(metal_arr.data_type(), &DataType::Float32);
 }

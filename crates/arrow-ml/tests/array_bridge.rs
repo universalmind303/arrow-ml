@@ -1,12 +1,12 @@
-use arrow::array::{Array, Float32Array, Float64Array, Int32Array, PrimitiveArray};
+use arrow::array::{Array as _, Float32Array, Float64Array, Int32Array, PrimitiveArray};
 use arrow::datatypes::{DataType, Float32Type, Int32Type};
-use arrow_ml_core::array::DeviceArray;
+use arrow_ml_core::array::Array;
 use arrow_ml_core::device::Device;
 
 #[test]
 fn f32_no_nulls_round_trip() {
     let original = Float32Array::from(vec![1.0, 2.0, 3.0]);
-    let dev = DeviceArray::from(original.clone());
+    let dev = Array::from(original.clone());
 
     assert_eq!(dev.data_type(), &DataType::Float32);
     assert_eq!(dev.device(), Device::Cpu);
@@ -19,7 +19,7 @@ fn f32_with_nulls_round_trip() {
     let original = Float32Array::from(vec![Some(1.5), None, Some(3.5), None, Some(5.5)]);
     assert_eq!(original.null_count(), 2);
 
-    let dev = DeviceArray::from(original.clone());
+    let dev = Array::from(original.clone());
     assert_eq!(dev.null_count(), 2);
     assert_eq!(dev.len(), 5);
 
@@ -39,7 +39,7 @@ fn f32_with_nulls_round_trip() {
 #[test]
 fn i32_with_nulls_round_trip() {
     let original = Int32Array::from(vec![Some(10), None, Some(30)]);
-    let dev = DeviceArray::from(original);
+    let dev = Array::from(original);
     let back: PrimitiveArray<Int32Type> = dev.try_into().unwrap();
 
     assert_eq!(back.len(), 3);
@@ -52,7 +52,7 @@ fn i32_with_nulls_round_trip() {
 #[test]
 fn f64_no_nulls_preserves_values() {
     let original = Float64Array::from(vec![1.0, 2.0, 3.0, 4.0]);
-    let dev = DeviceArray::from(original);
+    let dev = Array::from(original);
 
     assert_eq!(dev.data_type(), &DataType::Float64);
     assert!(dev.nulls().is_none());
@@ -61,7 +61,7 @@ fn f64_no_nulls_preserves_values() {
 #[test]
 fn all_null_array() {
     let original = Float32Array::from(vec![None, None, None]);
-    let dev = DeviceArray::from(original);
+    let dev = Array::from(original);
 
     assert_eq!(dev.null_count(), 3);
     assert_eq!(dev.len(), 3);
@@ -76,7 +76,7 @@ fn all_null_array() {
 #[test]
 fn empty_array() {
     let original = Float32Array::from(vec![] as Vec<f32>);
-    let dev = DeviceArray::from(original);
+    let dev = Array::from(original);
     assert!(dev.is_empty());
     assert_eq!(dev.null_count(), 0);
 }
@@ -84,14 +84,14 @@ fn empty_array() {
 #[test]
 fn clone_shares_buffer() {
     let original = Float32Array::from(vec![1.0, 2.0, 3.0]);
-    let dev = DeviceArray::from(original);
+    let dev = Array::from(original);
     let cloned = dev.clone();
     assert!(dev.values().ptr_eq(cloned.values()));
 }
 
 #[test]
 fn to_cpu_is_noop() {
-    let dev = DeviceArray::from(Float32Array::from(vec![1.0, 2.0]));
+    let dev = Array::from(Float32Array::from(vec![1.0, 2.0]));
     let moved = dev.to(Device::Cpu);
     assert!(dev.values().ptr_eq(moved.values()));
 }
