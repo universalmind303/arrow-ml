@@ -234,6 +234,21 @@ impl BackendRegistry {
             .cloned()
     }
 
+    pub fn best_softmax(&self) -> Option<Arc<Backend>> {
+        self.backends.iter().find(|b| b.softmax.is_some()).cloned()
+    }
+
+    pub fn best_softmax_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
+        self.backends
+            .iter()
+            .find(|b| {
+                b.softmax
+                    .as_ref()
+                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+            })
+            .cloned()
+    }
+
     /// Returns the highest-priority backend whose `device_type` matches
     /// the requested device, or `None` if no loaded backend serves it.
     ///

@@ -1,7 +1,4 @@
-use crate::backend::{
-    Backend, AM_ERR_DEVICE_MISMATCH, AM_ERR_GPU, AM_ERR_INVALID, AM_ERR_UNSUPPORTED,
-    AM_ERR_UNSUPPORTED_DTYPE,
-};
+use crate::backend::{AmStatus, Backend};
 use arrow::error::ArrowError;
 use std::fmt;
 
@@ -36,21 +33,23 @@ impl KernelError {
     /// thread-local last-error string from the backend if it exports one.
     pub fn from_code(rc: i32, backend: &Backend) -> Self {
         let msg = backend.last_error_message();
-        match rc {
-            AM_ERR_UNSUPPORTED => KernelError::Unsupported,
-            AM_ERR_GPU => KernelError::GpuError(if msg.is_empty() {
+        match AmStatus::from_i32(rc) {
+            Some(AmStatus::ErrUnsupported) => KernelError::Unsupported,
+            Some(AmStatus::ErrGpu) => KernelError::GpuError(if msg.is_empty() {
                 "backend reported GPU error".to_string()
             } else {
                 msg
             }),
-            AM_ERR_INVALID => KernelError::InvalidArgument(if msg.is_empty() {
+            Some(AmStatus::ErrInvalid) => KernelError::InvalidArgument(if msg.is_empty() {
                 "backend reported invalid argument".to_string()
             } else {
                 msg
             }),
-            AM_ERR_UNSUPPORTED_DTYPE => KernelError::UnsupportedDtype,
-            AM_ERR_DEVICE_MISMATCH => KernelError::DeviceMismatch,
-            _ => KernelError::InvalidArgument(format!("unknown backend error code {rc}: {msg}")),
+            Some(AmStatus::ErrUnsupportedDtype) => KernelError::UnsupportedDtype,
+            Some(AmStatus::ErrDeviceMismatch) => KernelError::DeviceMismatch,
+            Some(AmStatus::Ok) | None => {
+                KernelError::InvalidArgument(format!("unknown backend error code {rc}: {msg}"))
+            }
         }
     }
 }

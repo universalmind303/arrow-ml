@@ -9,7 +9,7 @@ use crate::device::Device;
 use crate::error::{DeviceError, Result};
 use arrow::buffer::MutableBuffer;
 use arrow::datatypes::ArrowNativeType;
-use arrow_ml_common::backend::{Backend, AM_OK};
+use arrow_ml_common::backend::{AmStatus, Backend};
 use arrow_ml_common::device_tensor::AmDeviceType;
 use arrow_ml_common::BackendRegistry;
 use std::ffi::c_void;
@@ -107,7 +107,7 @@ impl DeviceBuffer {
                 let rc = unsafe {
                     (backend.device_alloc)(am_dev as i32, id, capacity as u64, &mut device_ptr)
                 };
-                assert_eq!(rc, AM_OK, "device_alloc failed (rc={rc})");
+                assert_eq!(rc, AmStatus::Ok as i32, "device_alloc failed (rc={rc})");
 
                 Self {
                     inner: DeviceBufferInner::Device(DeviceView::new(DeviceAlloc {
@@ -331,7 +331,7 @@ impl DeviceBuffer {
                 let rc = unsafe {
                     (backend.device_alloc)(am_dev as i32, id, nbytes as u64, &mut device_ptr)
                 };
-                assert_eq!(rc, AM_OK, "device_alloc failed (rc={rc})");
+                assert_eq!(rc, AmStatus::Ok as i32, "device_alloc failed (rc={rc})");
 
                 let rc = unsafe {
                     (backend.device_copy)(
@@ -342,7 +342,11 @@ impl DeviceBuffer {
                         nbytes as u64,
                     )
                 };
-                assert_eq!(rc, AM_OK, "host->device copy failed (rc={rc})");
+                assert_eq!(
+                    rc,
+                    AmStatus::Ok as i32,
+                    "host->device copy failed (rc={rc})"
+                );
 
                 Self {
                     inner: DeviceBufferInner::Device(DeviceView::new(DeviceAlloc {
@@ -370,7 +374,11 @@ impl DeviceBuffer {
                         nbytes as u64,
                     )
                 };
-                assert_eq!(rc, AM_OK, "device->host copy failed (rc={rc})");
+                assert_eq!(
+                    rc,
+                    AmStatus::Ok as i32,
+                    "device->host copy failed (rc={rc})"
+                );
                 arrow::buffer::Buffer::from_vec(host_vec).into()
             }
             _ => todo!(),
@@ -598,8 +606,8 @@ mod tests {
     // ---------------------------------------------------------------
 
     fn has_metal() -> bool {
-        BackendRegistry::global()
-            .loaded_backends()
+        dbg!(BackendRegistry::global()
+            .loaded_backends())
             .contains(&"metal")
     }
 
@@ -821,7 +829,11 @@ mod tests {
         if !has_metal() {
             return;
         }
-        let empty = host_f32(&[]).to(Device::metal(0));
+        let empty = host_f32(&[]);
+        dbg!(&empty);
+        let empty = empty.to(Device::metal(0));
+        dbg!(&empty);
+
         assert_eq!(empty.len(), 0);
         assert!(empty.is_empty());
         assert_eq!(empty.device(), Device::Metal(0));

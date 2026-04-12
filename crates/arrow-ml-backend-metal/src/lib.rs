@@ -4,14 +4,14 @@
 //! Discovered and loaded at runtime by `arrow-ml-common::registry`.
 
 mod matmul;
+mod softmax;
 
-use arrow_ml_common::backend::{
-    AM_ERR_DEVICE_MISMATCH, AM_ERR_GPU, AM_ERR_INVALID, AM_ERR_UNSUPPORTED_DTYPE, AM_OK,
-    ARROW_ML_BACKEND_ABI_VERSION,
-};
+use arrow_ml_common::backend::{AmStatus, ARROW_ML_BACKEND_ABI_VERSION};
 use arrow_ml_common::device_tensor::{dtype, AmDeviceType, FFI_DeviceTensor};
 use arrow_ml_common::kernels::matmul::AmMatmulKernel;
+use arrow_ml_common::kernels::softmax::AmSoftmaxKernel;
 use matmul::MatmulKernel;
+use softmax::SoftmaxKernel;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CString};
@@ -118,24 +118,30 @@ pub extern "C" fn am_device_alloc(
         set_last_error(format!(
             "metal backend cannot allocate on device_type {device_type}"
         ));
-        return AM_ERR_DEVICE_MISMATCH;
+        return AmStatus::ErrDeviceMismatch as i32;
     }
     if out_ptr.is_null() {
         set_last_error("am_device_alloc: out_ptr is null");
-        return AM_ERR_INVALID;
+        return AmStatus::ErrInvalid as i32;
+    }
+    if nbytes == 0 {
+        unsafe {
+            *out_ptr = std::mem::align_of::<f64>() as *mut c_void;
+        }
+        return AmStatus::Ok as i32;
     }
     let device = match metal_device() {
         Some(d) => d,
         None => {
             set_last_error("no Metal device available");
-            return AM_ERR_GPU;
+            return AmStatus::ErrGpu as i32;
         }
     };
     let buffer = device.new_buffer(nbytes, metal::MTLResourceOptions::StorageModeShared);
     let ptr = buffer.contents();
     if ptr.is_null() {
         set_last_error("metal buffer contents is null");
-        return AM_ERR_GPU;
+        return AmStatus::ErrGpu as i32;
     }
     alloc_registry()
         .lock()
@@ -144,7 +150,7 @@ pub extern "C" fn am_device_alloc(
     unsafe {
         *out_ptr = ptr;
     }
-    AM_OK
+    AmStatus::Ok as i32
 }
 
 #[no_mangle]
@@ -166,13 +172,13 @@ pub extern "C" fn am_device_copy(
     clear_last_error();
     if src.is_null() || dst.is_null() {
         set_last_error("am_device_copy: null pointer");
-        return AM_ERR_INVALID;
+        return AmStatus::ErrInvalid as i32;
     }
     COPY_COUNT.fetch_add(1, Ordering::SeqCst);
     unsafe {
         std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, nbytes as usize);
     }
-    AM_OK
+    AmStatus::Ok as i32
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +203,7 @@ pub extern "C" fn am_matmul_open(
     clear_last_error();
     if dt != dtype::FLOAT32 {
         set_last_error(format!("metal matmul only supports f32, got dtype {dt}"));
-        return AM_ERR_UNSUPPORTED_DTYPE;
+        return AmStatus::ErrUnsupportedDtype as i32;
     }
     match MatmulKernel::new(dt) {
         Ok(k) => {
@@ -205,11 +211,11 @@ pub extern "C" fn am_matmul_open(
             unsafe {
                 *out_handle = Box::into_raw(boxed) as *mut AmMatmulKernel;
             }
-            AM_OK
+            AmStatus::Ok as i32
         }
         Err(msg) => {
             set_last_error(msg);
-            AM_ERR_GPU
+            AmStatus::ErrGpu as i32
         }
     }
 }
@@ -224,15 +230,15 @@ pub extern "C" fn am_matmul_invoke(
     clear_last_error();
     if handle.is_null() || a.is_null() || b.is_null() || c.is_null() {
         set_last_error("am_matmul_invoke: null pointer");
-        return AM_ERR_INVALID;
+        return AmStatus::ErrInvalid as i32;
     }
     let kernel = unsafe { &mut *(handle as *mut MatmulKernel) };
     let (a_ref, b_ref, c_ref) = unsafe { (&*a, &*b, &mut *c) };
     match unsafe { kernel.invoke(a_ref, b_ref, c_ref) } {
-        Ok(()) => AM_OK,
+        Ok(()) => AmStatus::Ok as i32,
         Err(msg) => {
             set_last_error(msg);
-            AM_ERR_GPU
+            AmStatus::ErrGpu as i32
         }
     }
 }
@@ -244,5 +250,77 @@ pub extern "C" fn am_matmul_close(handle: *mut AmMatmulKernel) {
     }
     unsafe {
         drop(Box::from_raw(handle as *mut MatmulKernel));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Softmax kernel ABI
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn am_softmax_supports(dt: i32, device_type: i32) -> i32 {
+    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_softmax_open(
+    dt: i32,
+    _device_type: i32,
+    out_handle: *mut *mut AmSoftmaxKernel,
+) -> i32 {
+    clear_last_error();
+    if dt != dtype::FLOAT32 {
+        set_last_error(format!("metal softmax only supports f32, got dtype {dt}"));
+        return AmStatus::ErrUnsupportedDtype as i32;
+    }
+    match SoftmaxKernel::new(dt) {
+        Ok(k) => {
+            let boxed = Box::new(k);
+            unsafe {
+                *out_handle = Box::into_raw(boxed) as *mut AmSoftmaxKernel;
+            }
+            AmStatus::Ok as i32
+        }
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_softmax_invoke(
+    handle: *mut AmSoftmaxKernel,
+    input: *const FFI_DeviceTensor,
+    output: *mut FFI_DeviceTensor,
+    axis: i32,
+) -> i32 {
+    clear_last_error();
+    if handle.is_null() || input.is_null() || output.is_null() {
+        set_last_error("am_softmax_invoke: null pointer");
+        return AmStatus::ErrInvalid as i32;
+    }
+    let kernel = unsafe { &mut *(handle as *mut SoftmaxKernel) };
+    let (in_ref, out_ref) = unsafe { (&*input, &mut *output) };
+    match unsafe { kernel.invoke(in_ref, out_ref, axis) } {
+        Ok(()) => AmStatus::Ok as i32,
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_softmax_close(handle: *mut AmSoftmaxKernel) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut SoftmaxKernel));
     }
 }

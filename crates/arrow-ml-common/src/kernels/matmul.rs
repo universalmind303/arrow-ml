@@ -11,7 +11,7 @@
 //! symbol is missing, the whole vtable is `None` and the backend doesn't
 //! support matmul.
 
-use crate::backend::{Backend, AM_OK};
+use crate::backend::{AmStatus, Backend};
 use crate::device_tensor::FFI_DeviceTensor;
 use crate::error::{KernelError, Result};
 use libloading::Library;
@@ -38,7 +38,7 @@ pub type AmMatmulSupportsFn = unsafe extern "C" fn(dtype: i32, device_type: i32)
 ///
 /// The handle is reusable across many invocations with varying shapes.
 ///
-/// On success, writes `*out_handle` and returns `AM_OK`. On failure
+/// On success, writes `*out_handle` and returns `AmStatus::Ok as i32`. On failure
 /// (unsupported dtype, OOM, etc.), writes NULL and returns a negative
 /// error code.
 pub type AmMatmulOpenFn =
@@ -52,7 +52,7 @@ pub type AmMatmulOpenFn =
 /// - `c` is rank-2 with shape `[m, n]`, pre-allocated by the caller
 ///
 /// All three tensors must match the dtype/device the kernel was opened with.
-/// Synchronous in v2 — when this returns `AM_OK`, `c` is ready to read.
+/// Synchronous in v2 — when this returns `AmStatus::Ok as i32`, `c` is ready to read.
 pub type AmMatmulInvokeFn = unsafe extern "C" fn(
     handle: *mut AmMatmulKernel,
     a: *const FFI_DeviceTensor,
@@ -125,7 +125,7 @@ impl MatmulKernel {
         let ops = backend.matmul.ok_or(KernelError::Unsupported)?;
         let mut handle: *mut AmMatmulKernel = std::ptr::null_mut();
         let rc = unsafe { (ops.open)(dtype, device_type, &mut handle) };
-        if rc != AM_OK || handle.is_null() {
+        if rc != AmStatus::Ok as i32 || handle.is_null() {
             return Err(KernelError::from_code(rc, &backend));
         }
         Ok(MatmulKernel {
@@ -154,7 +154,7 @@ impl MatmulKernel {
                 c as *mut FFI_DeviceTensor,
             )
         };
-        if rc != AM_OK {
+        if rc != AmStatus::Ok as i32 {
             return Err(KernelError::from_code(rc, &self.backend));
         }
         Ok(())

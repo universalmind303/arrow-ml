@@ -10,3 +10,4 @@
 
 pub mod device;
 pub mod matmul;
+pub mod softmax;

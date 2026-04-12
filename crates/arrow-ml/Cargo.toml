@@ -19,3 +19,6 @@ num-traits = { workspace = true }
 
 [dev-dependencies]
 arrow-ml-core = { path = "../arrow-ml-core", version = "0.1.0" }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+arrow-ml-backend-metal = { path = "../arrow-ml-backend-metal" }

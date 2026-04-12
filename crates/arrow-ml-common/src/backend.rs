@@ -10,6 +10,7 @@
 
 use crate::kernels::device::{AmDeviceAllocFn, AmDeviceCopyFn, AmDeviceFreeFn};
 use crate::kernels::matmul::MatmulOps;
+use crate::kernels::softmax::SoftmaxOps;
 use std::ffi::c_char;
 
 // ---------------------------------------------------------------------------
@@ -27,18 +28,35 @@ pub const ARROW_ML_BACKEND_ABI_VERSION: u32 = 1;
 // ABI result codes
 // ---------------------------------------------------------------------------
 
-/// Operation succeeded.
-pub const AM_OK: i32 = 0;
-/// The backend does not implement this kernel.
-pub const AM_ERR_UNSUPPORTED: i32 = -1;
-/// A GPU / device error occurred.
-pub const AM_ERR_GPU: i32 = -2;
-/// Invalid argument (bad dimensions, null pointer, etc.).
-pub const AM_ERR_INVALID: i32 = -3;
-/// The backend doesn't support the requested dtype.
-pub const AM_ERR_UNSUPPORTED_DTYPE: i32 = -4;
-/// A tensor is on a device this kernel handle wasn't opened for.
-pub const AM_ERR_DEVICE_MISMATCH: i32 = -5;
+/// Status codes returned by backend ABI functions.
+///
+/// `#[repr(i32)]` so the discriminants are ABI-compatible with the `i32`
+/// return values used in the C function signatures. Backends return raw
+/// `i32`; use [`AmStatus::from_i32`] to convert at the boundary.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmStatus {
+    Ok = 0,
+    ErrUnsupported = -1,
+    ErrGpu = -2,
+    ErrInvalid = -3,
+    ErrUnsupportedDtype = -4,
+    ErrDeviceMismatch = -5,
+}
+
+impl AmStatus {
+    pub fn from_i32(code: i32) -> Option<Self> {
+        match code {
+            0 => Some(Self::Ok),
+            -1 => Some(Self::ErrUnsupported),
+            -2 => Some(Self::ErrGpu),
+            -3 => Some(Self::ErrInvalid),
+            -4 => Some(Self::ErrUnsupportedDtype),
+            -5 => Some(Self::ErrDeviceMismatch),
+            _ => None,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Mandatory backend identification ABI
@@ -100,6 +118,9 @@ pub struct Backend {
     /// Matmul kernel vtable, if the backend exports the full
     /// `am_matmul_*` symbol family.
     pub matmul: Option<MatmulOps>,
+    /// Softmax kernel vtable, if the backend exports the full
+    /// `am_softmax_*` symbol family.
+    pub softmax: Option<SoftmaxOps>,
 }
 
 // SAFETY: The function pointers come from a loaded shared library whose
@@ -204,6 +225,7 @@ impl Backend {
 
         // Per-kernel vtables — each loads as an all-or-nothing unit.
         let matmul = MatmulOps::load(&lib);
+        let softmax = SoftmaxOps::load(&lib);
 
         Some(Backend {
             _lib: lib,
@@ -215,6 +237,7 @@ impl Backend {
             device_free,
             device_copy,
             matmul,
+            softmax,
         })
     }
 
