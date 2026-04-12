@@ -4,8 +4,10 @@ Apple Metal GPU backend plugin for [arrow-ml](https://crates.io/crates/arrow-ml)
 
 This crate compiles to a `cdylib` (`libarrow_ml_backend_metal.dylib`) that
 arrow-ml's runtime backend registry discovers and loads at runtime. There is
-no Rust API surface — consumers do not link this crate at compile time. Instead,
-the cdylib is dropped onto disk and loaded via `dlopen`.
+no Rust API surface — the cdylib is loaded via `dlopen`.
+
+Data must be explicitly moved to a Metal device with `.to(Device::metal(0))`
+before GPU kernels will run. See the main arrow-ml README for details.
 
 ## Installation
 
@@ -18,13 +20,11 @@ arrow-ml-backend-metal = "0.1"
 ```
 
 When you `cargo build`, Cargo produces `libarrow_ml_backend_metal.dylib` in
-your `target/{debug,release}/` directory. arrow-ml's runtime registry already
-searches there (and next to your built executable), so the backend is picked
-up automatically.
+your `target/{debug,release}/` directory. arrow-ml's runtime registry
+searches there automatically.
 
 For production deployments, copy the dylib next to your binary or set
-`ARROW_ML_BACKEND_DIR` to a directory containing it. See arrow-ml's README
-for the full backend search-path documentation.
+`ARROW_ML_BACKEND_DIR` to a directory containing it.
 
 ## Discovery via manifest
 

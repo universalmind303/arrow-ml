@@ -1,32 +1,32 @@
 # arrow-ml
 
-High-performance machine learning kernels built on [Apache Arrow](https://arrow.apache.org/), written in Rust.
+Device-aware, [Arrow](https://arrow.apache.org/)-compatible data types and ML kernels, written in Rust.
 
-`arrow-ml` provides optimized tensor operations, linear algebra primitives, and neural network building blocks that operate directly on Arrow's in-memory format. It features a tiered execution strategy — naive loops for small inputs, SIMD for medium workloads, and pluggable GPU backends for large computations.
+`arrow-ml` provides two things: device-aware types that wrap Arrow's in-memory arrays and tensors so they can live on CPU or GPU, and a set of ML kernels that operate on them. You decide where data lives — `.to(device)` moves it, and kernels execute wherever their inputs are.
 
 ## Features
 
-- **40+ operations** covering linear algebra, activations, normalization, convolution, pooling, and more
-- **Arrow-native** — works directly with `arrow::tensor::Tensor` and `PrimitiveArray`, zero-copy where possible
-- **Tiered dispatch** — automatically selects between naive, SIMD (`portable_simd`), and GPU paths based on input size
+- **Arrow-native** — zero-copy conversion from `arrow::tensor::Tensor` and `PrimitiveArray` into device-aware types
+- **Explicit device placement** — `.to(Device::metal(0))` moves to GPU, `.to(Device::cpu())` brings it back
 - **Pluggable GPU backends** — ships with an Apple Metal backend; extensible via a C ABI plugin system
-- **Type-generic** — optimized fast paths for `f32`/`f64`, generic fallback for all Arrow numeric types
-- **Null-propagating** — correctly handles nullable Arrow arrays throughout
+- **Type-generic** — optimized fast paths for `f32`/`f64`
+- **Null-propagating** — `DeviceArray` preserves nullable Arrow arrays throughout
 
 ## Crate Structure
 
 ```
-arrow-ml              # Unified public API with TensorOps / ArrayOps traits
-├── arrow-ml-linalg         # Linear algebra, reductions, reshaping, conv, pooling
+arrow-ml                    # Re-exports: activations, linalg, common
+├── arrow-ml-core           # Device-aware types: Tensor, DeviceArray, DeviceBuffer, Device
+├── arrow-ml-linalg         # Linear algebra (matmul)
 ├── arrow-ml-activations    # Activation functions (ReLU, GELU, Sigmoid, etc.)
-└── arrow-ml-common         # Shared error types & backend plugin registry
+└── arrow-ml-common         # Shared error types, backend plugin registry, FFI types
 
 arrow-ml-backend-metal      # Metal GPU backend (macOS, cdylib) — standalone crate
 ```
 
-The first four crates are a single cargo workspace; `arrow-ml-backend-metal`
-sits beside it as an independent crate with its own release pipeline so that
-the cross-platform crates stay buildable on every target.
+`arrow-ml-backend-metal` sits outside the main workspace as an independent
+crate with its own release pipeline so that the cross-platform crates stay
+buildable on every target.
 
 ## Quick Start
 
@@ -35,92 +35,62 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 arrow-ml = "0.1"
+arrow-ml-core = "0.1"
 arrow = { version = ">=56, <59", default-features = false }
 ```
 
-`arrow-ml` is tested against arrow 56–58. Pick whichever version in that
-range fits the rest of your dependency tree.
-
-### Tensor Operations
+### CPU Matmul
 
 ```rust
-use arrow::buffer::{Buffer, ScalarBuffer};
+use arrow::buffer::ScalarBuffer;
 use arrow::datatypes::Float32Type;
-use arrow::tensor::Tensor;
-use arrow_ml::tensor_ops::TensorOps;
-
-// Create 2x3 and 3x2 tensors
-let a_buf = Buffer::from(ScalarBuffer::<f32>::from(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).into_inner());
-let a = Tensor::new_row_major(a_buf, Some(vec![2, 3]), None).unwrap();
-
-let b_buf = Buffer::from(ScalarBuffer::<f32>::from(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]).into_inner());
-let b = Tensor::new_row_major(b_buf, Some(vec![3, 2]), None).unwrap();
-
-// Matrix multiply, transpose, then sum along last axis
-let result = a.dot::<Float32Type>(&b)?
-    .t::<Float32Type>()?
-    .sum::<Float32Type>(&[-1], false)?;
-```
-
-### Activation Functions
-
-```rust
-use arrow::array::Float32Array;
-use arrow_ml::array_ops::ArrayOps;
-
-let input = Float32Array::from(vec![Some(-1.0), Some(0.0), Some(1.0), None]);
-let activated = input.relu();       // [0.0, 0.0, 1.0, null]
-let gelu = input.gelu();            // GELU approximation
-let sig = input.sigmoid();          // Sigmoid
-```
-
-### Direct Kernel Calls
-
-```rust
+use arrow::tensor::Tensor as ArrowTensor;
+use arrow_ml_core::tensor::Tensor;
 use arrow_ml_linalg::matmul::matmul;
-use arrow_ml_linalg::layernorm::layer_norm;
-use arrow_ml_linalg::conv::conv2d;
 
-let c = matmul(&a, &b)?;            // C = A * B
+// Zero-copy from Arrow tensors
+let a = Tensor::from(
+    ArrowTensor::<Float32Type>::new_row_major(
+        ScalarBuffer::<f32>::from(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).into_inner(),
+        Some(vec![2, 3]), None,
+    ).unwrap(),
+);
+let b = Tensor::from(
+    ArrowTensor::<Float32Type>::new_row_major(
+        ScalarBuffer::<f32>::from(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]).into_inner(),
+        Some(vec![3, 2]), None,
+    ).unwrap(),
+);
+
+let c = matmul(&a, &b)?;  // [2, 2] on CPU
 ```
 
-## Operations
+### Moving Data to GPU
 
-### Linear Algebra
+```rust
+use arrow_ml_core::device::Device;
 
-`matmul`, `gemm`, `matvec`, `gemv`, `dot`, `axpy`, `scal`
+let a_gpu = a.to(Device::metal(0));
+let b_gpu = b.to(Device::metal(0));
+let c_gpu = matmul(&a_gpu, &b_gpu)?;  // runs on GPU, result stays on GPU
+let c_cpu = c_gpu.to(Device::cpu());   // bring back to host
+```
 
-### Activations
+### Bridging Back to Arrow
 
-`relu`, `leaky_relu`, `gelu`, `gelu_exact`, `sigmoid`, `tanh`, `silu`, `softmax`
+```rust
 
-### Normalization
+// This will error if you have not first moved the data back to cpu.
+assert!(a_gpu.try_into::<ArrowTensor<_, _>>().is_err());
 
-`layer_norm`, `rms_norm`, `batch_norm`, `group_norm`, `instance_norm`, `l1_norm`, `l2_norm`
-
-### Reductions
-
-`reduce_sum`, `reduce_mean`, `reduce_max`, `reduce_min`, `reduce_prod`, `cumsum`, `argmax`, `argmin`, `topk`
-
-### Tensor Manipulation
-
-`reshape`, `flatten`, `squeeze`, `unsqueeze`, `expand`, `transpose`, `concat`, `gather`, `gather_elements`, `scatter_nd`, `pad`
-
-### Convolution & Pooling
-
-`conv2d`, `conv_transpose2d`, `avg_pool2d`, `max_pool2d`, `resize`
-
-### Element-wise Math
-
-`pow`, `erf`, `reciprocal`, `cos`, `sin`, `floor`, `ceil`, `round`, `clip`
-
-### Other
-
-`embedding`, `where_cond`
+let arrow_tensor: ArrowTensor<'static, Float32Type> = c_cpu.try_into()?;
+```
 
 ## GPU Backend
 
-On macOS, the Metal backend accelerates `matmul` for large matrices automatically. The dispatch threshold is configurable but defaults to 256×256.
+Kernels run on whatever device their inputs are on. Move data to GPU with
+`.to(Device::metal(0))`, and the GPU kernel runs. Both operands must be on
+the same device or the kernel returns an error.
 
 The backend plugin system discovers backends at runtime via two parallel
 mechanisms:
@@ -156,7 +126,7 @@ function-pointer types and the current `ARROW_ML_BACKEND_ABI_VERSION`.
 cargo bench -p arrow-ml-linalg
 ```
 
-Benchmarks cover matmul performance across sizes (16–4096) for both `f32` and `f64`, comparing naive vs SIMD vs GPU paths.
+Benchmarks cover matmul performance across sizes for `f32` and `f64`.
 
 ## Requirements
 
