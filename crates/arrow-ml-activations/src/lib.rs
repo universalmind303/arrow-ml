@@ -1,6 +1,3 @@
 pub mod gelu;
-pub mod relu;
-pub mod sigmoid;
-pub mod silu;
+pub mod layernorm;
 pub mod softmax;
-pub mod tanh;

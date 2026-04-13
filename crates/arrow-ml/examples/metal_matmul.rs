@@ -8,6 +8,7 @@ use arrow_ml_core::tensor::Tensor;
 fn main() {
     let registry = BackendRegistry::global();
     let backends = registry.loaded_backends();
+
     println!("Loaded backends: {backends:?}");
 
     assert!(

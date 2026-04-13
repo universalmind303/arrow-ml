@@ -1,93 +1,193 @@
-use arrow::array::{ArrowPrimitiveType, PrimitiveArray};
-use num_traits::{Float, One};
+use arrow::buffer::Buffer;
+use arrow::datatypes::DataType;
+use arrow_ml_common::device_tensor::dtype;
+use arrow_ml_common::error::{KernelError, Result};
+use arrow_ml_common::kernels::gelu::GeluKernel;
+use arrow_ml_common::BackendRegistry;
+use arrow_ml_core::buffer::DeviceBuffer;
+use arrow_ml_core::device::Device;
+use arrow_ml_core::tensor::Tensor;
+use std::mem;
 
-/// GeLU activation (tanh approximation).
-///
-/// gelu(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
-///
-/// Used in GPT, BERT, and most modern transformers.
-pub fn gelu<T>(array: &PrimitiveArray<T>) -> PrimitiveArray<T>
-where
-    T: ArrowPrimitiveType,
-    T::Native: Float,
-{
-    let half = <T::Native as num_traits::NumCast>::from(0.5).unwrap();
-    let one = T::Native::one();
-    let sqrt_2_over_pi = <T::Native as num_traits::NumCast>::from(0.7978845608).unwrap(); // sqrt(2/π)
-    let coeff = <T::Native as num_traits::NumCast>::from(0.044715).unwrap();
+const SQRT_2_OVER_PI: f64 = 0.7978845608028654;
+const GELU_COEFF: f64 = 0.044715;
 
-    array.unary(|x| {
-        let inner = sqrt_2_over_pi * (x + coeff * x * x * x);
-        half * x * (one + inner.tanh())
-    })
-}
+pub fn gelu(input: &Tensor) -> Result<Tensor> {
+    let shape = input.shape().ok_or_else(|| {
+        KernelError::InvalidArgument("gelu: tensor has no shape".into())
+    })?;
 
-/// GeLU activation (exact): x * 0.5 * (1 + erf(x / sqrt(2))).
-///
-/// Uses an erf approximation. Slightly more accurate than the tanh version.
-pub fn gelu_exact<T>(array: &PrimitiveArray<T>) -> PrimitiveArray<T>
-where
-    T: ArrowPrimitiveType,
-    T::Native: Float,
-{
-    let sqrt2 = <T::Native as num_traits::NumCast>::from(std::f64::consts::SQRT_2).unwrap();
-    let half = <T::Native as num_traits::NumCast>::from(0.5).unwrap();
-    let one = T::Native::one();
-
-    array.unary(|x| half * x * (one + erf(x / sqrt2)))
-}
-
-/// Approximate erf using Abramowitz & Stegun formula 7.1.26.
-fn erf<F: Float>(x: F) -> F {
-    if x >= F::zero() {
-        erf_positive(x)
-    } else {
-        -erf_positive(-x)
+    match input.device() {
+        Device::Cpu => cpu_gelu(input, shape),
+        device @ (Device::Metal(_) | Device::Cuda(_)) => device_gelu(input, shape, device),
     }
 }
 
-fn erf_positive<F: Float>(x: F) -> F {
-    let one = F::one();
-    let p = <F as num_traits::NumCast>::from(0.3275911).unwrap();
-    let a1 = <F as num_traits::NumCast>::from(0.254829592).unwrap();
-    let a2 = <F as num_traits::NumCast>::from(-0.284496736).unwrap();
-    let a3 = <F as num_traits::NumCast>::from(1.421413741).unwrap();
-    let a4 = <F as num_traits::NumCast>::from(-1.453152027).unwrap();
-    let a5 = <F as num_traits::NumCast>::from(1.061405429).unwrap();
+fn cpu_gelu(input: &Tensor, shape: &[usize]) -> Result<Tensor> {
+    match input.data_type() {
+        DataType::Float32 => cpu_gelu_typed::<f32>(input, shape),
+        DataType::Float64 => cpu_gelu_typed::<f64>(input, shape),
+        other => Err(KernelError::InvalidArgument(format!(
+            "gelu: unsupported dtype {other:?}"
+        ))),
+    }
+}
 
-    let t = one / (one + p * x);
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let t4 = t3 * t;
-    let t5 = t4 * t;
+fn cpu_gelu_typed<T>(input: &Tensor, shape: &[usize]) -> Result<Tensor>
+where
+    T: arrow::datatypes::ArrowNativeType + num_traits::Float,
+{
+    let data: &[T] = input.buffer().typed_data().map_err(|e| {
+        KernelError::InvalidArgument(format!("gelu: {e}"))
+    })?;
 
-    one - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * (-x * x).exp()
+    let half = T::from(0.5).unwrap();
+    let one = T::from(1.0).unwrap();
+    let coeff = T::from(GELU_COEFF).unwrap();
+    let sqrt_2_pi = T::from(SQRT_2_OVER_PI).unwrap();
+
+    let out: Vec<T> = data
+        .iter()
+        .map(|&x| {
+            let inner = sqrt_2_pi * (x + coeff * x * x * x);
+            half * x * (one + inner.tanh())
+        })
+        .collect();
+
+    let ndim = shape.len();
+    let elem = mem::size_of::<T>();
+    let mut strides = vec![0usize; ndim];
+    if ndim > 0 {
+        strides[ndim - 1] = elem;
+        for i in (0..ndim - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+    }
+
+    Ok(Tensor::new(
+        input.data_type().clone(),
+        DeviceBuffer::from(Buffer::from_vec(out)),
+        Some(shape.to_vec()),
+        Some(strides),
+    ))
+}
+
+fn device_gelu(input: &Tensor, shape: &[usize], device: Device) -> Result<Tensor> {
+    let dtype_code = match input.data_type() {
+        DataType::Float32 => dtype::FLOAT32,
+        other => {
+            return Err(KernelError::InvalidArgument(format!(
+                "gelu: unsupported dtype {other:?} for device"
+            )))
+        }
+    };
+
+    let am_dev = device.to_am();
+    let backend = BackendRegistry::global()
+        .best_gelu_for(dtype_code, am_dev as i32)
+        .ok_or_else(|| KernelError::InvalidArgument("no gelu backend for this device".into()))?;
+
+    let kernel = GeluKernel::open(backend, dtype_code, am_dev as i32)
+        .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+
+    let total: usize = shape.iter().product();
+    let elem = mem::size_of::<f32>();
+    let ndim = shape.len();
+    let mut strides = vec![0usize; ndim];
+    if ndim > 0 {
+        strides[ndim - 1] = elem;
+        for i in (0..ndim - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+    }
+
+    let output = Tensor::new(
+        input.data_type().clone(),
+        DeviceBuffer::new(total * elem, device),
+        Some(shape.to_vec()),
+        Some(strides),
+    );
+
+    let in_ffi = input.as_ffi();
+    let mut out_ffi = output.as_ffi();
+
+    unsafe {
+        kernel
+            .invoke(&in_ffi, &mut out_ffi)
+            .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Float32Array;
+    use arrow::buffer::ScalarBuffer;
+    use arrow::datatypes::Float32Type;
+    use arrow::tensor::Tensor as ArrowTensor;
 
-    #[test]
-    fn test_gelu_f32() {
-        let input = Float32Array::from(vec![-1.0f32, 0.0, 1.0, 2.0]);
-        let output = gelu(&input);
-        let vals = output.values();
-        assert!((vals[0] - (-0.1588)).abs() < 0.01);
-        assert!((vals[1] - 0.0).abs() < 1e-6);
-        assert!((vals[2] - 0.8412).abs() < 0.01);
-        assert!((vals[3] - 1.9545).abs() < 0.01);
+    fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor {
+        let arrow_t = ArrowTensor::<Float32Type>::new_row_major(
+            ScalarBuffer::<f32>::from(data).into_inner(),
+            Some(shape),
+            None,
+        )
+        .unwrap();
+        Tensor::from(arrow_t)
+    }
+
+    fn ref_gelu(x: f32) -> f32 {
+        0.5 * x * (1.0 + (SQRT_2_OVER_PI as f32 * (x + GELU_COEFF as f32 * x * x * x)).tanh())
     }
 
     #[test]
-    fn test_gelu_exact_f32() {
-        let input = Float32Array::from(vec![-1.0f32, 0.0, 1.0, 2.0]);
-        let output = gelu_exact(&input);
-        let vals = output.values();
-        assert!((vals[0] - (-0.1587)).abs() < 0.01);
-        assert!((vals[1] - 0.0).abs() < 1e-6);
-        assert!((vals[2] - 0.8413).abs() < 0.01);
-        assert!((vals[3] - 1.9545).abs() < 0.01);
+    fn test_gelu_zero() {
+        let input = make_f32(vec![0.0], vec![1]);
+        let output = gelu(&input).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        assert!((data[0]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_gelu_positive() {
+        let input = make_f32(vec![1.0, 2.0, 3.0], vec![3]);
+        let output = gelu(&input).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        for (i, &v) in data.iter().enumerate() {
+            let expected = ref_gelu([1.0, 2.0, 3.0][i]);
+            assert!(
+                (v - expected).abs() < 1e-5,
+                "at {i}: got {v}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_gelu_negative() {
+        let input = make_f32(vec![-1.0, -2.0, -3.0], vec![3]);
+        let output = gelu(&input).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        // GELU of negative values should be small but not zero
+        for &v in data {
+            assert!(v < 0.0);
+            assert!(v > -0.2);
+        }
+    }
+
+    #[test]
+    fn test_gelu_preserves_shape() {
+        let input = make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let output = gelu(&input).unwrap();
+        assert_eq!(output.shape().unwrap(), &[2, 3]);
+    }
+
+    #[test]
+    fn test_gelu_large_positive() {
+        // For large x, gelu(x) ≈ x
+        let input = make_f32(vec![10.0], vec![1]);
+        let output = gelu(&input).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        assert!((data[0] - 10.0).abs() < 1e-3);
     }
 }

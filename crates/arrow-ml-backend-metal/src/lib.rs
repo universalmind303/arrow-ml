@@ -3,13 +3,19 @@
 //! Compiled as a cdylib (`libarrow_ml_backend_metal.dylib`).
 //! Discovered and loaded at runtime by `arrow-ml-common::registry`.
 
+mod gelu;
+mod layernorm;
 mod matmul;
 mod softmax;
 
 use arrow_ml_common::backend::{AmStatus, ARROW_ML_BACKEND_ABI_VERSION};
 use arrow_ml_common::device_tensor::{dtype, AmDeviceType, FFI_DeviceTensor};
+use arrow_ml_common::kernels::gelu::AmGeluKernel;
+use arrow_ml_common::kernels::layernorm::AmLayerNormKernel;
 use arrow_ml_common::kernels::matmul::AmMatmulKernel;
 use arrow_ml_common::kernels::softmax::AmSoftmaxKernel;
+use gelu::GeluKernel;
+use layernorm::LayerNormKernel;
 use matmul::MatmulKernel;
 use softmax::SoftmaxKernel;
 use std::cell::RefCell;
@@ -322,5 +328,155 @@ pub extern "C" fn am_softmax_close(handle: *mut AmSoftmaxKernel) {
     }
     unsafe {
         drop(Box::from_raw(handle as *mut SoftmaxKernel));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Layer norm kernel ABI
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn am_layernorm_supports(dt: i32, device_type: i32) -> i32 {
+    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_layernorm_open(
+    dt: i32,
+    _device_type: i32,
+    out_handle: *mut *mut AmLayerNormKernel,
+) -> i32 {
+    clear_last_error();
+    if dt != dtype::FLOAT32 {
+        set_last_error(format!(
+            "metal layernorm only supports f32, got dtype {dt}"
+        ));
+        return AmStatus::ErrUnsupportedDtype as i32;
+    }
+    match LayerNormKernel::new(dt) {
+        Ok(k) => {
+            let boxed = Box::new(k);
+            unsafe {
+                *out_handle = Box::into_raw(boxed) as *mut AmLayerNormKernel;
+            }
+            AmStatus::Ok as i32
+        }
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_layernorm_invoke(
+    handle: *mut AmLayerNormKernel,
+    input: *const FFI_DeviceTensor,
+    gamma: *const FFI_DeviceTensor,
+    beta: *const FFI_DeviceTensor,
+    output: *mut FFI_DeviceTensor,
+    axis: i32,
+    epsilon: f32,
+) -> i32 {
+    clear_last_error();
+    if handle.is_null() || input.is_null() || gamma.is_null() || beta.is_null() || output.is_null()
+    {
+        set_last_error("am_layernorm_invoke: null pointer");
+        return AmStatus::ErrInvalid as i32;
+    }
+    let kernel = unsafe { &mut *(handle as *mut LayerNormKernel) };
+    let (in_ref, gamma_ref, beta_ref, out_ref) =
+        unsafe { (&*input, &*gamma, &*beta, &mut *output) };
+    match unsafe { kernel.invoke(in_ref, gamma_ref, beta_ref, out_ref, axis, epsilon) } {
+        Ok(()) => AmStatus::Ok as i32,
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_layernorm_close(handle: *mut AmLayerNormKernel) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut LayerNormKernel));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GELU kernel ABI
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn am_gelu_supports(dt: i32, device_type: i32) -> i32 {
+    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_gelu_open(
+    dt: i32,
+    _device_type: i32,
+    out_handle: *mut *mut AmGeluKernel,
+) -> i32 {
+    clear_last_error();
+    if dt != dtype::FLOAT32 {
+        set_last_error(format!("metal gelu only supports f32, got dtype {dt}"));
+        return AmStatus::ErrUnsupportedDtype as i32;
+    }
+    match GeluKernel::new(dt) {
+        Ok(k) => {
+            let boxed = Box::new(k);
+            unsafe {
+                *out_handle = Box::into_raw(boxed) as *mut AmGeluKernel;
+            }
+            AmStatus::Ok as i32
+        }
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_gelu_invoke(
+    handle: *mut AmGeluKernel,
+    input: *const FFI_DeviceTensor,
+    output: *mut FFI_DeviceTensor,
+) -> i32 {
+    clear_last_error();
+    if handle.is_null() || input.is_null() || output.is_null() {
+        set_last_error("am_gelu_invoke: null pointer");
+        return AmStatus::ErrInvalid as i32;
+    }
+    let kernel = unsafe { &mut *(handle as *mut GeluKernel) };
+    let (in_ref, out_ref) = unsafe { (&*input, &mut *output) };
+    match unsafe { kernel.invoke(in_ref, out_ref) } {
+        Ok(()) => AmStatus::Ok as i32,
+        Err(msg) => {
+            set_last_error(msg);
+            AmStatus::ErrGpu as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn am_gelu_close(handle: *mut AmGeluKernel) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut GeluKernel));
     }
 }

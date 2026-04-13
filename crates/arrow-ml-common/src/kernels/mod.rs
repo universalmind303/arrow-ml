@@ -9,5 +9,7 @@
 //! dispatch indirection — each kernel is its own typed entry point.
 
 pub mod device;
+pub mod gelu;
+pub mod layernorm;
 pub mod matmul;
 pub mod softmax;

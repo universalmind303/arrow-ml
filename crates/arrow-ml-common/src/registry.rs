@@ -249,6 +249,39 @@ impl BackendRegistry {
             .cloned()
     }
 
+    pub fn best_gelu(&self) -> Option<Arc<Backend>> {
+        self.backends.iter().find(|b| b.gelu.is_some()).cloned()
+    }
+
+    pub fn best_gelu_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
+        self.backends
+            .iter()
+            .find(|b| {
+                b.gelu
+                    .as_ref()
+                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+            })
+            .cloned()
+    }
+
+    pub fn best_layernorm(&self) -> Option<Arc<Backend>> {
+        self.backends
+            .iter()
+            .find(|b| b.layernorm.is_some())
+            .cloned()
+    }
+
+    pub fn best_layernorm_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
+        self.backends
+            .iter()
+            .find(|b| {
+                b.layernorm
+                    .as_ref()
+                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+            })
+            .cloned()
+    }
+
     /// Returns the highest-priority backend whose `device_type` matches
     /// the requested device, or `None` if no loaded backend serves it.
     ///

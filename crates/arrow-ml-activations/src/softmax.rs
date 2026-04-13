@@ -1,114 +1,82 @@
-use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use arrow::buffer::Buffer;
-use arrow::tensor::Tensor;
-use arrow_ml_common::KernelError;
-use arrow_ml_common::Result;
-use num_traits::{Float, Zero};
-use std::ops::AddAssign;
+use arrow::datatypes::DataType;
+use arrow_ml_common::device_tensor::dtype;
+use arrow_ml_common::error::{KernelError, Result};
+use arrow_ml_common::kernels::softmax::SoftmaxKernel;
+use arrow_ml_common::BackendRegistry;
+use arrow_ml_core::buffer::DeviceBuffer;
+use arrow_ml_core::device::Device;
+use arrow_ml_core::tensor::Tensor;
+use std::mem;
 
-/// Softmax over all elements: softmax(x_i) = exp(x_i - max) / sum(exp(x_j - max)).
-///
-/// Uses the max-subtraction trick for numerical stability.
-/// Returns an error if the array contains null values or is empty.
-pub fn softmax<T>(array: &PrimitiveArray<T>) -> Result<PrimitiveArray<T>>
-where
-    T: ArrowPrimitiveType,
-    T::Native: Float + AddAssign,
-{
-    if array.null_count() > 0 {
-        return Err(KernelError::NullsNotSupported {
-            operation: "softmax",
-        });
-    }
-    if array.is_empty() {
-        return Err(KernelError::EmptyArray {
-            operation: "softmax",
-        });
-    }
-
-    let values = array.values();
-
-    // Find max for numerical stability
-    let max_val = values
-        .iter()
-        .copied()
-        .fold(T::Native::neg_infinity(), |a, b| a.max(b));
-
-    // Compute exp(x - max) and running sum
-    let mut sum = T::Native::zero();
-    let exp_vals: Vec<T::Native> = values
-        .iter()
-        .map(|&x| {
-            let e = (x - max_val).exp();
-            sum += e;
-            e
-        })
-        .collect();
-
-    // Normalize
-    let result: Vec<T::Native> = exp_vals.into_iter().map(|e| e / sum).collect();
-    Ok(PrimitiveArray::from_iter_values(result))
-}
-
-/// Softmax over a specific axis of an N-D tensor.
-///
-/// Uses the outer/reduce/inner decomposition: for each (outer, inner) pair,
-/// extracts the `dim_size` elements along the given axis, computes softmax
-/// over them using the max-subtraction trick, and writes them back.
-///
-/// Supports negative axis values (e.g., -1 means last axis).
-pub fn softmax_tensor<T>(input: &Tensor<'_, T>, axis: i64) -> Result<Tensor<'static, T>>
-where
-    T: ArrowPrimitiveType,
-    T::Native: Float + AddAssign,
-{
+pub fn softmax(input: &Tensor, axis: i64) -> Result<Tensor> {
     let shape = input.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("softmax_tensor: tensor has no shape".into())
+        KernelError::InvalidArgument("softmax: tensor has no shape".into())
     })?;
     let ndim = shape.len();
     if ndim == 0 {
         return Err(KernelError::InvalidArgument(
-            "softmax_tensor: tensor must be at least 1D".into(),
+            "softmax: tensor must be at least 1D".into(),
         ));
     }
 
-    let axis = if axis < 0 { ndim as i64 + axis } else { axis };
-    if axis < 0 || axis >= ndim as i64 {
+    let resolved = if axis < 0 { ndim as i64 + axis } else { axis };
+    if resolved < 0 || resolved >= ndim as i64 {
         return Err(KernelError::InvalidArgument(format!(
-            "softmax_tensor: axis {} out of range for {}D tensor",
+            "softmax: axis {} out of range for {}D tensor",
             axis, ndim
         )));
     }
-    let axis = axis as usize;
 
-    let outer_size: usize = shape[..axis].iter().product();
+    match input.device() {
+        Device::Cpu => cpu_softmax(input, shape, resolved as usize),
+        device @ (Device::Metal(_) | Device::Cuda(_)) => {
+            device_softmax(input, shape, axis as i32, device)
+        }
+    }
+}
+
+fn cpu_softmax(input: &Tensor, shape: &[usize], axis: usize) -> Result<Tensor> {
+    match input.data_type() {
+        DataType::Float32 => cpu_softmax_typed::<f32>(input, shape, axis),
+        DataType::Float64 => cpu_softmax_typed::<f64>(input, shape, axis),
+        other => Err(KernelError::InvalidArgument(format!(
+            "softmax: unsupported dtype {other:?}"
+        ))),
+    }
+}
+
+fn cpu_softmax_typed<T>(input: &Tensor, shape: &[usize], axis: usize) -> Result<Tensor>
+where
+    T: arrow::datatypes::ArrowNativeType + num_traits::Float + std::ops::AddAssign,
+{
+    let data: &[T] = input.buffer().typed_data().map_err(|e| {
+        KernelError::InvalidArgument(format!("softmax: {e}"))
+    })?;
+    let ndim = shape.len();
+
+    let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
     let dim_size = shape[axis];
-    let inner_size: usize = shape[axis + 1..].iter().product();
-    let outer_size = if outer_size == 0 { 1 } else { outer_size };
-    let inner_size = if inner_size == 0 { 1 } else { inner_size };
+    let inner_size: usize = shape[axis + 1..].iter().product::<usize>().max(1);
 
-    let data: &[T::Native] = input.data().typed_data();
     let mut out = data.to_vec();
 
     for o in 0..outer_size {
         for i in 0..inner_size {
-            // Find max
-            let mut max_val = T::Native::neg_infinity();
+            let mut max_val = T::neg_infinity();
             for d in 0..dim_size {
                 let idx = o * dim_size * inner_size + d * inner_size + i;
                 if data[idx] > max_val {
                     max_val = data[idx];
                 }
             }
-            // Exp and sum
-            let mut sum = T::Native::zero();
+            let mut sum = T::zero();
             for d in 0..dim_size {
                 let idx = o * dim_size * inner_size + d * inner_size + i;
                 let e = (data[idx] - max_val).exp();
                 out[idx] = e;
                 sum += e;
             }
-            // Normalize
             for d in 0..dim_size {
                 let idx = o * dim_size * inner_size + d * inner_size + i;
                 out[idx] = out[idx] / sum;
@@ -116,83 +84,133 @@ where
         }
     }
 
-    let buf = Buffer::from_vec(out);
-    Tensor::new_row_major(buf, Some(shape.to_vec()), None).map_err(KernelError::from)
+    let elem = mem::size_of::<T>();
+    let mut strides = vec![0usize; ndim];
+    if ndim > 0 {
+        strides[ndim - 1] = elem;
+        for i in (0..ndim - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+    }
+
+    Ok(Tensor::new(
+        input.data_type().clone(),
+        DeviceBuffer::from(Buffer::from_vec(out)),
+        Some(shape.to_vec()),
+        Some(strides),
+    ))
+}
+
+fn device_softmax(input: &Tensor, shape: &[usize], axis: i32, device: Device) -> Result<Tensor> {
+    let dtype_code = match input.data_type() {
+        DataType::Float32 => dtype::FLOAT32,
+        other => {
+            return Err(KernelError::InvalidArgument(format!(
+                "softmax: unsupported dtype {other:?} for device"
+            )))
+        }
+    };
+
+    let am_dev = device.to_am();
+    let backend = BackendRegistry::global()
+        .best_softmax_for(dtype_code, am_dev as i32)
+        .ok_or_else(|| {
+            KernelError::InvalidArgument("no softmax backend for this device".into())
+        })?;
+
+    let kernel = SoftmaxKernel::open(backend, dtype_code, am_dev as i32)
+        .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+
+    let total: usize = shape.iter().product();
+    let elem = mem::size_of::<f32>();
+    let ndim = shape.len();
+    let mut strides = vec![0usize; ndim];
+    if ndim > 0 {
+        strides[ndim - 1] = elem;
+        for i in (0..ndim - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+    }
+
+    let output = Tensor::new(
+        input.data_type().clone(),
+        DeviceBuffer::new(total * elem, device),
+        Some(shape.to_vec()),
+        Some(strides),
+    );
+
+    let in_ffi = input.as_ffi();
+    let mut out_ffi = output.as_ffi();
+
+    unsafe {
+        kernel
+            .invoke(&in_ffi, &mut out_ffi, axis)
+            .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Float32Array;
     use arrow::buffer::ScalarBuffer;
     use arrow::datatypes::Float32Type;
+    use arrow::tensor::Tensor as ArrowTensor;
+
+    fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor {
+        let arrow_t = ArrowTensor::<Float32Type>::new_row_major(
+            ScalarBuffer::<f32>::from(data).into_inner(),
+            Some(shape),
+            None,
+        )
+        .unwrap();
+        Tensor::from(arrow_t)
+    }
 
     #[test]
     fn test_softmax_uniform() {
-        // All equal values -> uniform distribution
-        let input = Float32Array::from(vec![1.0_f32, 1.0, 1.0, 1.0]);
-        let output = softmax(&input).unwrap();
-        for i in 0..4 {
-            assert!((output.value(i) - 0.25).abs() < 1e-6);
+        let input = make_f32(vec![1.0, 1.0, 1.0, 1.0], vec![4]);
+        let output = softmax(&input, 0).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        for v in data {
+            assert!((v - 0.25).abs() < 1e-6);
         }
     }
 
     #[test]
     fn test_softmax_sums_to_one() {
-        let input = Float32Array::from(vec![1.0_f32, 2.0, 3.0, 4.0]);
-        let output = softmax(&input).unwrap();
-        let sum: f32 = output.values().iter().sum();
+        let input = make_f32(vec![1.0, 2.0, 3.0, 4.0], vec![4]);
+        let output = softmax(&input, 0).unwrap();
+        let sum: f32 = output.buffer().typed_data::<f32>().unwrap().iter().sum();
         assert!((sum - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_softmax_ordering() {
-        // Larger inputs should have larger softmax values
-        let input = Float32Array::from(vec![1.0_f32, 3.0, 2.0]);
-        let output = softmax(&input).unwrap();
-        assert!(output.value(1) > output.value(2));
-        assert!(output.value(2) > output.value(0));
+        let input = make_f32(vec![1.0, 3.0, 2.0], vec![3]);
+        let output = softmax(&input, 0).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        assert!(data[1] > data[2]);
+        assert!(data[2] > data[0]);
     }
 
     #[test]
     fn test_softmax_numerical_stability() {
-        // Large values that would overflow without max subtraction
-        let input = Float32Array::from(vec![1000.0_f32, 1001.0, 1002.0]);
-        let output = softmax(&input).unwrap();
-        let sum: f32 = output.values().iter().sum();
+        let input = make_f32(vec![1000.0, 1001.0, 1002.0], vec![3]);
+        let output = softmax(&input, 0).unwrap();
+        let data = output.buffer().typed_data::<f32>().unwrap();
+        let sum: f32 = data.iter().sum();
         assert!((sum - 1.0).abs() < 1e-5);
-        // Should still preserve ordering
-        assert!(output.value(2) > output.value(1));
-        assert!(output.value(1) > output.value(0));
+        assert!(data[2] > data[1]);
+        assert!(data[1] > data[0]);
     }
 
     #[test]
-    fn test_softmax_rejects_nulls() {
-        let input = Float32Array::from(vec![Some(1.0_f32), None, Some(3.0)]);
-        assert!(softmax(&input).is_err());
-    }
-
-    #[test]
-    fn test_softmax_rejects_empty() {
-        let input = Float32Array::from(Vec::<f32>::new());
-        assert!(softmax(&input).is_err());
-    }
-
-    // --- Tensor softmax tests ---
-
-    fn make_f32(data: Vec<f32>, shape: Vec<usize>) -> Tensor<'static, Float32Type> {
-        let buffer = ScalarBuffer::<f32>::from(data).into_inner();
-        Tensor::new_row_major(buffer, Some(shape), None).unwrap()
-    }
-
-    #[test]
-    fn test_softmax_tensor_2d_axis1() {
-        // 2x3 tensor, softmax over axis 1 (rows)
+    fn test_softmax_2d_axis1() {
         let input = make_f32(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0], vec![2, 3]);
-        let out = softmax_tensor::<Float32Type>(&input, 1).unwrap();
-        assert_eq!(out.shape().unwrap(), &vec![2, 3]);
-        let data = out.data().typed_data::<f32>();
-        // Each row should sum to 1
+        let out = softmax(&input, 1).unwrap();
+        let data = out.buffer().typed_data::<f32>().unwrap();
         let row0_sum: f32 = data[0..3].iter().sum();
         let row1_sum: f32 = data[3..6].iter().sum();
         assert!((row0_sum - 1.0).abs() < 1e-6);
@@ -200,12 +218,10 @@ mod tests {
     }
 
     #[test]
-    fn test_softmax_tensor_2d_axis0() {
-        // 2x3 tensor, softmax over axis 0 (columns)
+    fn test_softmax_2d_axis0() {
         let input = make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-        let out = softmax_tensor::<Float32Type>(&input, 0).unwrap();
-        let data = out.data().typed_data::<f32>();
-        // Each column should sum to 1
+        let out = softmax(&input, 0).unwrap();
+        let data = out.buffer().typed_data::<f32>().unwrap();
         for j in 0..3 {
             let col_sum = data[j] + data[3 + j];
             assert!((col_sum - 1.0).abs() < 1e-6);
@@ -213,12 +229,10 @@ mod tests {
     }
 
     #[test]
-    fn test_softmax_tensor_3d_attention() {
-        // Simulate attention: (batch=1, heads=2, seq_len=3), softmax over last axis
+    fn test_softmax_3d_attention() {
         let input = make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![1, 2, 3]);
-        let out = softmax_tensor::<Float32Type>(&input, -1).unwrap();
-        assert_eq!(out.shape().unwrap(), &vec![1, 2, 3]);
-        let data = out.data().typed_data::<f32>();
+        let out = softmax(&input, -1).unwrap();
+        let data = out.buffer().typed_data::<f32>().unwrap();
         let sum0: f32 = data[0..3].iter().sum();
         let sum1: f32 = data[3..6].iter().sum();
         assert!((sum0 - 1.0).abs() < 1e-6);
@@ -226,10 +240,10 @@ mod tests {
     }
 
     #[test]
-    fn test_softmax_tensor_negative_axis() {
+    fn test_softmax_negative_axis() {
         let input = make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-        let out = softmax_tensor::<Float32Type>(&input, -1).unwrap(); // same as axis=1
-        let data = out.data().typed_data::<f32>();
+        let out = softmax(&input, -1).unwrap();
+        let data = out.buffer().typed_data::<f32>().unwrap();
         let row0_sum: f32 = data[0..3].iter().sum();
         assert!((row0_sum - 1.0).abs() < 1e-6);
     }

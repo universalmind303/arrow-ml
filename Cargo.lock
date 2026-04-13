@@ -161,6 +161,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-ml-common",
+ "arrow-ml-core",
  "num-traits",
 ]
 

@@ -1,8 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use arrow::buffer::ScalarBuffer;
-use arrow::datatypes::{DataType, Float32Type};
-use arrow::tensor::Tensor as ArrowTensor;
+use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::{dtype, AmDeviceType};
 use arrow_ml_common::kernels::softmax::SoftmaxKernel;
 use arrow_ml_common::BackendRegistry;
@@ -194,12 +192,9 @@ fn softmax_metal_vs_cpu_agree() {
     let gpu_data = read_f32(&gpu_output);
 
     // CPU reference
-    let arrow_buf = ScalarBuffer::<f32>::from(data).into_inner();
-    let arrow_tensor =
-        ArrowTensor::<Float32Type>::new_row_major(arrow_buf, Some(vec![3, 3]), None).unwrap();
     let cpu_out =
-        arrow_ml::activations::softmax::softmax_tensor::<Float32Type>(&arrow_tensor, 1).unwrap();
-    let cpu_data: &[f32] = cpu_out.data().typed_data();
+        arrow_ml::activations::softmax::softmax(&input, 1).unwrap();
+    let cpu_data = cpu_out.buffer().typed_data::<f32>().unwrap();
 
     assert_eq!(gpu_data.len(), cpu_data.len());
     for (i, (g, c)) in gpu_data.iter().zip(cpu_data.iter()).enumerate() {

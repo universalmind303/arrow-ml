@@ -9,6 +9,8 @@
 //! (`am_<kernel>_supports/open/invoke/close`) loaded as a unit.
 
 use crate::kernels::device::{AmDeviceAllocFn, AmDeviceCopyFn, AmDeviceFreeFn};
+use crate::kernels::gelu::GeluOps;
+use crate::kernels::layernorm::LayerNormOps;
 use crate::kernels::matmul::MatmulOps;
 use crate::kernels::softmax::SoftmaxOps;
 use std::ffi::c_char;
@@ -121,6 +123,12 @@ pub struct Backend {
     /// Softmax kernel vtable, if the backend exports the full
     /// `am_softmax_*` symbol family.
     pub softmax: Option<SoftmaxOps>,
+    /// Layer norm kernel vtable, if the backend exports the full
+    /// `am_layernorm_*` symbol family.
+    pub layernorm: Option<LayerNormOps>,
+    /// GELU kernel vtable, if the backend exports the full
+    /// `am_gelu_*` symbol family.
+    pub gelu: Option<GeluOps>,
 }
 
 // SAFETY: The function pointers come from a loaded shared library whose
@@ -226,6 +234,8 @@ impl Backend {
         // Per-kernel vtables — each loads as an all-or-nothing unit.
         let matmul = MatmulOps::load(&lib);
         let softmax = SoftmaxOps::load(&lib);
+        let layernorm = LayerNormOps::load(&lib);
+        let gelu = GeluOps::load(&lib);
 
         Some(Backend {
             _lib: lib,
@@ -238,6 +248,8 @@ impl Backend {
             device_copy,
             matmul,
             softmax,
+            layernorm,
+            gelu,
         })
     }
 
