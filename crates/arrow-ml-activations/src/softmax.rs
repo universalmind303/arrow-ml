@@ -2,7 +2,7 @@ use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::dtype;
 use arrow_ml_common::error::{KernelError, Result};
-use arrow_ml_common::kernels::softmax::SoftmaxKernel;
+use arrow_ml_common::kernels::softmax;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
@@ -113,12 +113,8 @@ fn device_softmax(input: &Tensor, shape: &[usize], axis: i32, device: Device) ->
     };
 
     let am_dev = device.to_am();
-    let backend = BackendRegistry::global()
-        .best_softmax_for(dtype_code, am_dev as i32)
-        .ok_or_else(|| KernelError::InvalidArgument("no softmax backend for this device".into()))?;
-
-    let kernel = SoftmaxKernel::open(backend, dtype_code, am_dev as i32)
-        .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+    let kernel =
+        BackendRegistry::global().get_kernel::<softmax::Softmax>(dtype_code, am_dev as i32)?;
 
     let total: usize = shape.iter().product();
     let elem = mem::size_of::<f32>();

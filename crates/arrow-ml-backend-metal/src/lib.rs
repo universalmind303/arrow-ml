@@ -188,42 +188,75 @@ pub extern "C" fn am_device_copy(
 }
 
 // ---------------------------------------------------------------------------
-// Matmul kernel ABI
+// Per-kernel ABI exports
 // ---------------------------------------------------------------------------
+//
+// The `metal_kernel_exports!` macro generates the identical supports/open/close
+// functions. Only invoke is hand-written per kernel since its signature varies.
 
-#[no_mangle]
-pub extern "C" fn am_matmul_supports(dt: i32, device_type: i32) -> i32 {
-    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
-        1
-    } else {
-        0
-    }
+macro_rules! metal_kernel_exports {
+    (
+        abi_prefix: $prefix:ident,
+        opaque_handle: $Handle:ty,
+        impl_kernel: $Kernel:ty,
+        kernel_label: $label:expr,
+    ) => {
+        ::paste::paste! {
+            #[no_mangle]
+            pub extern "C" fn [<am_ $prefix _supports>](dt: i32, device_type: i32) -> i32 {
+                if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
+                    1
+                } else {
+                    0
+                }
+            }
+
+            #[no_mangle]
+            pub extern "C" fn [<am_ $prefix _open>](
+                dt: i32,
+                _device_type: i32,
+                out_handle: *mut *mut $Handle,
+            ) -> i32 {
+                clear_last_error();
+                if dt != dtype::FLOAT32 {
+                    set_last_error(format!(
+                        concat!("metal ", $label, " only supports f32, got dtype {}"), dt
+                    ));
+                    return AmStatus::ErrUnsupportedDtype as i32;
+                }
+                match <$Kernel>::new(dt) {
+                    Ok(k) => {
+                        let boxed = Box::new(k);
+                        unsafe {
+                            *out_handle = Box::into_raw(boxed) as *mut $Handle;
+                        }
+                        AmStatus::Ok as i32
+                    }
+                    Err(msg) => {
+                        set_last_error(msg);
+                        AmStatus::ErrGpu as i32
+                    }
+                }
+            }
+
+            #[no_mangle]
+            pub extern "C" fn [<am_ $prefix _close>](handle: *mut $Handle) {
+                if handle.is_null() {
+                    return;
+                }
+                unsafe {
+                    drop(Box::from_raw(handle as *mut $Kernel));
+                }
+            }
+        }
+    };
 }
 
-#[no_mangle]
-pub extern "C" fn am_matmul_open(
-    dt: i32,
-    _device_type: i32,
-    out_handle: *mut *mut AmMatmulKernel,
-) -> i32 {
-    clear_last_error();
-    if dt != dtype::FLOAT32 {
-        set_last_error(format!("metal matmul only supports f32, got dtype {dt}"));
-        return AmStatus::ErrUnsupportedDtype as i32;
-    }
-    match MatmulKernel::new(dt) {
-        Ok(k) => {
-            let boxed = Box::new(k);
-            unsafe {
-                *out_handle = Box::into_raw(boxed) as *mut AmMatmulKernel;
-            }
-            AmStatus::Ok as i32
-        }
-        Err(msg) => {
-            set_last_error(msg);
-            AmStatus::ErrGpu as i32
-        }
-    }
+metal_kernel_exports! {
+    abi_prefix: matmul,
+    opaque_handle: AmMatmulKernel,
+    impl_kernel: MatmulKernel,
+    kernel_label: "matmul",
 }
 
 #[no_mangle]
@@ -249,53 +282,11 @@ pub extern "C" fn am_matmul_invoke(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn am_matmul_close(handle: *mut AmMatmulKernel) {
-    if handle.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Box::from_raw(handle as *mut MatmulKernel));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Softmax kernel ABI
-// ---------------------------------------------------------------------------
-
-#[no_mangle]
-pub extern "C" fn am_softmax_supports(dt: i32, device_type: i32) -> i32 {
-    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
-        1
-    } else {
-        0
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn am_softmax_open(
-    dt: i32,
-    _device_type: i32,
-    out_handle: *mut *mut AmSoftmaxKernel,
-) -> i32 {
-    clear_last_error();
-    if dt != dtype::FLOAT32 {
-        set_last_error(format!("metal softmax only supports f32, got dtype {dt}"));
-        return AmStatus::ErrUnsupportedDtype as i32;
-    }
-    match SoftmaxKernel::new(dt) {
-        Ok(k) => {
-            let boxed = Box::new(k);
-            unsafe {
-                *out_handle = Box::into_raw(boxed) as *mut AmSoftmaxKernel;
-            }
-            AmStatus::Ok as i32
-        }
-        Err(msg) => {
-            set_last_error(msg);
-            AmStatus::ErrGpu as i32
-        }
-    }
+metal_kernel_exports! {
+    abi_prefix: softmax,
+    opaque_handle: AmSoftmaxKernel,
+    impl_kernel: SoftmaxKernel,
+    kernel_label: "softmax",
 }
 
 #[no_mangle]
@@ -321,55 +312,11 @@ pub extern "C" fn am_softmax_invoke(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn am_softmax_close(handle: *mut AmSoftmaxKernel) {
-    if handle.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Box::from_raw(handle as *mut SoftmaxKernel));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Layer norm kernel ABI
-// ---------------------------------------------------------------------------
-
-#[no_mangle]
-pub extern "C" fn am_layernorm_supports(dt: i32, device_type: i32) -> i32 {
-    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
-        1
-    } else {
-        0
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn am_layernorm_open(
-    dt: i32,
-    _device_type: i32,
-    out_handle: *mut *mut AmLayerNormKernel,
-) -> i32 {
-    clear_last_error();
-    if dt != dtype::FLOAT32 {
-        set_last_error(format!(
-            "metal layernorm only supports f32, got dtype {dt}"
-        ));
-        return AmStatus::ErrUnsupportedDtype as i32;
-    }
-    match LayerNormKernel::new(dt) {
-        Ok(k) => {
-            let boxed = Box::new(k);
-            unsafe {
-                *out_handle = Box::into_raw(boxed) as *mut AmLayerNormKernel;
-            }
-            AmStatus::Ok as i32
-        }
-        Err(msg) => {
-            set_last_error(msg);
-            AmStatus::ErrGpu as i32
-        }
-    }
+metal_kernel_exports! {
+    abi_prefix: layernorm,
+    opaque_handle: AmLayerNormKernel,
+    impl_kernel: LayerNormKernel,
+    kernel_label: "layernorm",
 }
 
 #[no_mangle]
@@ -400,53 +347,11 @@ pub extern "C" fn am_layernorm_invoke(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn am_layernorm_close(handle: *mut AmLayerNormKernel) {
-    if handle.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Box::from_raw(handle as *mut LayerNormKernel));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GELU kernel ABI
-// ---------------------------------------------------------------------------
-
-#[no_mangle]
-pub extern "C" fn am_gelu_supports(dt: i32, device_type: i32) -> i32 {
-    if dt == dtype::FLOAT32 && device_type == AmDeviceType::Metal as i32 {
-        1
-    } else {
-        0
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn am_gelu_open(
-    dt: i32,
-    _device_type: i32,
-    out_handle: *mut *mut AmGeluKernel,
-) -> i32 {
-    clear_last_error();
-    if dt != dtype::FLOAT32 {
-        set_last_error(format!("metal gelu only supports f32, got dtype {dt}"));
-        return AmStatus::ErrUnsupportedDtype as i32;
-    }
-    match GeluKernel::new(dt) {
-        Ok(k) => {
-            let boxed = Box::new(k);
-            unsafe {
-                *out_handle = Box::into_raw(boxed) as *mut AmGeluKernel;
-            }
-            AmStatus::Ok as i32
-        }
-        Err(msg) => {
-            set_last_error(msg);
-            AmStatus::ErrGpu as i32
-        }
-    }
+metal_kernel_exports! {
+    abi_prefix: gelu,
+    opaque_handle: AmGeluKernel,
+    impl_kernel: GeluKernel,
+    kernel_label: "gelu",
 }
 
 #[no_mangle]
@@ -468,15 +373,5 @@ pub extern "C" fn am_gelu_invoke(
             set_last_error(msg);
             AmStatus::ErrGpu as i32
         }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn am_gelu_close(handle: *mut AmGeluKernel) {
-    if handle.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Box::from_raw(handle as *mut GeluKernel));
     }
 }

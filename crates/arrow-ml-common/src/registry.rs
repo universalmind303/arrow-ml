@@ -206,80 +206,27 @@ impl BackendRegistry {
         self.backends.iter().map(|b| b.name.as_str()).collect()
     }
 
-    /// Returns the highest-priority backend that exports the matmul symbol
-    /// family, or `None` if no loaded backend implements matmul.
+    /// Find the best backend for a kernel and open it, or return
+    /// `Unsupported` if no loaded backend handles this dtype/device.
     ///
-    /// This does **not** check dtype/device support. Prefer
-    /// [`BackendRegistry::best_matmul_for`] if you care which dtype and
-    /// device the kernel needs to handle.
-    pub fn best_matmul(&self) -> Option<Arc<Backend>> {
-        self.backends.iter().find(|b| b.matmul.is_some()).cloned()
-    }
-
-    /// Returns the highest-priority backend whose matmul kernel reports
-    /// support for `(dtype, device_type)`, or `None` if no loaded backend
-    /// supports that combination.
-    ///
-    /// Iterates through every loaded backend in priority order — so if the
-    /// top-priority backend exports matmul but only supports a different
-    /// dtype, the next backend is tried, and so on.
-    pub fn best_matmul_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
-        self.backends
+    /// ```ignore
+    /// use arrow_ml_common::kernels::softmax::Softmax;
+    /// let kernel = registry.get_kernel::<Softmax>(dtype::FLOAT32, AmDeviceType::Metal as i32)?;
+    /// ```
+    pub fn get_kernel<K: crate::kernels::KernelDescriptor>(
+        &self,
+        dtype: i32,
+        device_type: i32,
+    ) -> crate::error::Result<K::Handle> {
+        let backend = self
+            .backends
             .iter()
             .find(|b| {
-                b.matmul
-                    .as_ref()
-                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
+                K::ops_from_backend(b).is_some_and(|ops| K::supports(&ops, dtype, device_type))
             })
             .cloned()
-    }
-
-    pub fn best_softmax(&self) -> Option<Arc<Backend>> {
-        self.backends.iter().find(|b| b.softmax.is_some()).cloned()
-    }
-
-    pub fn best_softmax_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
-        self.backends
-            .iter()
-            .find(|b| {
-                b.softmax
-                    .as_ref()
-                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
-            })
-            .cloned()
-    }
-
-    pub fn best_gelu(&self) -> Option<Arc<Backend>> {
-        self.backends.iter().find(|b| b.gelu.is_some()).cloned()
-    }
-
-    pub fn best_gelu_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
-        self.backends
-            .iter()
-            .find(|b| {
-                b.gelu
-                    .as_ref()
-                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
-            })
-            .cloned()
-    }
-
-    pub fn best_layernorm(&self) -> Option<Arc<Backend>> {
-        self.backends
-            .iter()
-            .find(|b| b.layernorm.is_some())
-            .cloned()
-    }
-
-    pub fn best_layernorm_for(&self, dtype: i32, device_type: i32) -> Option<Arc<Backend>> {
-        self.backends
-            .iter()
-            .find(|b| {
-                b.layernorm
-                    .as_ref()
-                    .is_some_and(|ops| ops.supports_dtype(dtype, device_type))
-            })
-            .cloned()
+            .ok_or(crate::error::KernelError::Unsupported)?;
+        K::open(backend, dtype, device_type)
     }
 
     /// Returns the highest-priority backend whose `device_type` matches

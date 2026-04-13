@@ -2,7 +2,7 @@ use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::dtype;
 use arrow_ml_common::error::{KernelError, Result};
-use arrow_ml_common::kernels::gelu::GeluKernel;
+use arrow_ml_common::kernels::gelu;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
@@ -84,12 +84,7 @@ fn device_gelu(input: &Tensor, shape: &[usize], device: Device) -> Result<Tensor
     };
 
     let am_dev = device.to_am();
-    let backend = BackendRegistry::global()
-        .best_gelu_for(dtype_code, am_dev as i32)
-        .ok_or_else(|| KernelError::InvalidArgument("no gelu backend for this device".into()))?;
-
-    let kernel = GeluKernel::open(backend, dtype_code, am_dev as i32)
-        .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+    let kernel = BackendRegistry::global().get_kernel::<gelu::Gelu>(dtype_code, am_dev as i32)?;
 
     let total: usize = shape.iter().product();
     let elem = mem::size_of::<f32>();

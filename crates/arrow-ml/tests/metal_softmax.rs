@@ -2,18 +2,12 @@
 
 use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::{dtype, AmDeviceType};
-use arrow_ml_common::kernels::softmax::SoftmaxKernel;
+use arrow_ml_common::kernels::softmax::Softmax;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
 use arrow_ml_core::tensor::Tensor;
 use std::mem;
-
-fn require_metal_softmax() -> std::sync::Arc<arrow_ml_common::backend::Backend> {
-    let reg = BackendRegistry::global();
-    reg.best_softmax_for(dtype::FLOAT32, AmDeviceType::Metal as i32)
-        .expect("Metal backend with softmax support not loaded")
-}
 
 fn make_tensor(data: Vec<f32>, shape: Vec<usize>) -> Tensor {
     let elem = mem::size_of::<f32>();
@@ -30,8 +24,9 @@ fn make_tensor(data: Vec<f32>, shape: Vec<usize>) -> Tensor {
 }
 
 fn run_softmax(input: &Tensor, axis: i32) -> Tensor {
-    let backend = require_metal_softmax();
-    let kernel = SoftmaxKernel::open(backend, dtype::FLOAT32, AmDeviceType::Metal as i32).unwrap();
+    let kernel = BackendRegistry::global()
+        .get_kernel::<Softmax>(dtype::FLOAT32, AmDeviceType::Metal as i32)
+        .unwrap();
 
     let shape = input.shape().unwrap();
     let total: usize = shape.iter().product();

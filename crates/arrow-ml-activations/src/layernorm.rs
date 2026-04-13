@@ -2,7 +2,7 @@ use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::dtype;
 use arrow_ml_common::error::{KernelError, Result};
-use arrow_ml_common::kernels::layernorm::LayerNormKernel;
+use arrow_ml_common::kernels::layernorm;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
@@ -158,14 +158,8 @@ fn device_layer_norm(
     };
 
     let am_dev = device.to_am();
-    let backend = BackendRegistry::global()
-        .best_layernorm_for(dtype_code, am_dev as i32)
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("no layernorm backend for this device".into())
-        })?;
-
-    let kernel = LayerNormKernel::open(backend, dtype_code, am_dev as i32)
-        .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;
+    let kernel =
+        BackendRegistry::global().get_kernel::<layernorm::LayerNorm>(dtype_code, am_dev as i32)?;
 
     let total: usize = shape.iter().product();
     let elem = mem::size_of::<f32>();

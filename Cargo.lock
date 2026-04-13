@@ -172,6 +172,7 @@ dependencies = [
  "arrow",
  "arrow-ml-common",
  "metal",
+ "paste",
 ]
 
 [[package]]
@@ -182,6 +183,7 @@ dependencies = [
  "glob",
  "libloading",
  "num-traits",
+ "paste",
  "serde",
  "serde_json",
 ]

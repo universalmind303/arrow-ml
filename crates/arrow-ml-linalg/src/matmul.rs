@@ -2,7 +2,7 @@ use crate::error::{LinalgError, Result};
 use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
 use arrow_ml_common::device_tensor::dtype;
-use arrow_ml_common::kernels::matmul::MatmulKernel;
+use arrow_ml_common::kernels::matmul;
 use arrow_ml_common::BackendRegistry;
 use arrow_ml_core::buffer::DeviceBuffer;
 use arrow_ml_core::device::Device;
@@ -79,11 +79,8 @@ fn device_matmul(a: &Tensor, b: &Tensor, m: usize, n: usize, device: Device) -> 
     };
 
     let am_dev = device.to_am();
-    let backend = BackendRegistry::global()
-        .best_matmul_for(dtype_code, am_dev as i32)
-        .ok_or_else(|| LinalgError::InvalidArgument("no matmul backend for this device".into()))?;
-
-    let kernel = MatmulKernel::open(backend, dtype_code, am_dev as i32)
+    let kernel = BackendRegistry::global()
+        .get_kernel::<matmul::Matmul>(dtype_code, am_dev as i32)
         .map_err(|e| LinalgError::InvalidArgument(format!("{e}")))?;
 
     let elem = mem::size_of::<f32>();

@@ -36,8 +36,11 @@ fn metal_backend_loads() {
 fn metal_backend_reports_matmul_support() {
     require_metal();
     let reg = BackendRegistry::global();
-    let backend = reg.best_matmul().expect("no matmul backend");
-    assert_eq!(backend.device_type, AmDeviceType::Metal as i32);
+    use arrow_ml_common::device_tensor::dtype;
+    use arrow_ml_common::kernels::matmul::Matmul;
+    let _kernel = reg
+        .get_kernel::<Matmul>(dtype::FLOAT32, AmDeviceType::Metal as i32)
+        .expect("no matmul kernel for Metal f32");
 }
 
 // ---------------------------------------------------------------------------
