@@ -13,9 +13,9 @@ const SQRT_2_OVER_PI: f64 = 0.7978845608028654;
 const GELU_COEFF: f64 = 0.044715;
 
 pub fn gelu(input: &Tensor) -> Result<Tensor> {
-    let shape = input.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("gelu: tensor has no shape".into())
-    })?;
+    let shape = input
+        .shape()
+        .ok_or_else(|| KernelError::InvalidArgument("gelu: tensor has no shape".into()))?;
 
     match input.device() {
         Device::Cpu => cpu_gelu(input, shape),
@@ -37,9 +37,10 @@ fn cpu_gelu_typed<T>(input: &Tensor, shape: &[usize]) -> Result<Tensor>
 where
     T: arrow::datatypes::ArrowNativeType + num_traits::Float,
 {
-    let data: &[T] = input.buffer().typed_data().map_err(|e| {
-        KernelError::InvalidArgument(format!("gelu: {e}"))
-    })?;
+    let data: &[T] = input
+        .buffer()
+        .typed_data()
+        .map_err(|e| KernelError::InvalidArgument(format!("gelu: {e}")))?;
 
     let half = T::from(0.5).unwrap();
     let one = T::from(1.0).unwrap();

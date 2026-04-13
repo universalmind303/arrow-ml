@@ -606,9 +606,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     fn has_metal() -> bool {
-        dbg!(BackendRegistry::global()
-            .loaded_backends())
-            .contains(&"metal")
+        dbg!(BackendRegistry::global().loaded_backends()).contains(&"metal")
     }
 
     fn host_f32(data: &[f32]) -> DeviceBuffer {

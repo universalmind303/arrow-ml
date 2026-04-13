@@ -26,7 +26,12 @@ fn main() {
     );
 
     let out = softmax(&input_1d.to(Device::metal(0)), 0).unwrap();
-    let data = out.to(Device::cpu()).buffer().typed_data::<f32>().unwrap().to_vec();
+    let data = out
+        .to(Device::cpu())
+        .buffer()
+        .typed_data::<f32>()
+        .unwrap()
+        .to_vec();
     let sum: f32 = data.iter().sum();
     println!("1D softmax([1,2,3,4]): {data:?}");
     println!("  sum = {sum}");
@@ -43,7 +48,12 @@ fn main() {
     );
 
     let out = softmax(&input_2d.to(Device::metal(0)), -1).unwrap();
-    let data = out.to(Device::cpu()).buffer().typed_data::<f32>().unwrap().to_vec();
+    let data = out
+        .to(Device::cpu())
+        .buffer()
+        .typed_data::<f32>()
+        .unwrap()
+        .to_vec();
     let row0_sum: f32 = data[0..3].iter().sum();
     let row1_sum: f32 = data[3..6].iter().sum();
     println!("2D softmax (axis=-1):");
@@ -63,7 +73,12 @@ fn main() {
     );
 
     let out = softmax(&input_3d.to(Device::metal(0)), -1).unwrap();
-    let data = out.to(Device::cpu()).buffer().typed_data::<f32>().unwrap().to_vec();
+    let data = out
+        .to(Device::cpu())
+        .buffer()
+        .typed_data::<f32>()
+        .unwrap()
+        .to_vec();
     let head0_sum: f32 = data[0..4].iter().sum();
     let head1_sum: f32 = data[4..8].iter().sum();
     println!("3D attention softmax (1,2,4) axis=-1:");

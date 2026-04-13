@@ -10,9 +10,9 @@ use arrow_ml_core::tensor::Tensor;
 use std::mem;
 
 pub fn softmax(input: &Tensor, axis: i64) -> Result<Tensor> {
-    let shape = input.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("softmax: tensor has no shape".into())
-    })?;
+    let shape = input
+        .shape()
+        .ok_or_else(|| KernelError::InvalidArgument("softmax: tensor has no shape".into()))?;
     let ndim = shape.len();
     if ndim == 0 {
         return Err(KernelError::InvalidArgument(
@@ -50,9 +50,10 @@ fn cpu_softmax_typed<T>(input: &Tensor, shape: &[usize], axis: usize) -> Result<
 where
     T: arrow::datatypes::ArrowNativeType + num_traits::Float + std::ops::AddAssign,
 {
-    let data: &[T] = input.buffer().typed_data().map_err(|e| {
-        KernelError::InvalidArgument(format!("softmax: {e}"))
-    })?;
+    let data: &[T] = input
+        .buffer()
+        .typed_data()
+        .map_err(|e| KernelError::InvalidArgument(format!("softmax: {e}")))?;
     let ndim = shape.len();
 
     let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
@@ -114,9 +115,7 @@ fn device_softmax(input: &Tensor, shape: &[usize], axis: i32, device: Device) ->
     let am_dev = device.to_am();
     let backend = BackendRegistry::global()
         .best_softmax_for(dtype_code, am_dev as i32)
-        .ok_or_else(|| {
-            KernelError::InvalidArgument("no softmax backend for this device".into())
-        })?;
+        .ok_or_else(|| KernelError::InvalidArgument("no softmax backend for this device".into()))?;
 
     let kernel = SoftmaxKernel::open(backend, dtype_code, am_dev as i32)
         .map_err(|e| KernelError::InvalidArgument(format!("{e}")))?;

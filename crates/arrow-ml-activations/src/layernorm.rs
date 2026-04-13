@@ -16,9 +16,9 @@ pub fn layer_norm(
     axis: i64,
     epsilon: f32,
 ) -> Result<Tensor> {
-    let shape = input.shape().ok_or_else(|| {
-        KernelError::InvalidArgument("layer_norm: tensor has no shape".into())
-    })?;
+    let shape = input
+        .shape()
+        .ok_or_else(|| KernelError::InvalidArgument("layer_norm: tensor has no shape".into()))?;
     let ndim = shape.len();
     if ndim == 0 {
         return Err(KernelError::InvalidArgument(
@@ -70,15 +70,18 @@ fn cpu_layer_norm_typed<T>(
 where
     T: arrow::datatypes::ArrowNativeType + num_traits::Float + std::ops::AddAssign,
 {
-    let data: &[T] = input.buffer().typed_data().map_err(|e| {
-        KernelError::InvalidArgument(format!("layer_norm: {e}"))
-    })?;
-    let gamma_data: &[T] = gamma.buffer().typed_data().map_err(|e| {
-        KernelError::InvalidArgument(format!("layer_norm gamma: {e}"))
-    })?;
-    let beta_data: &[T] = beta.buffer().typed_data().map_err(|e| {
-        KernelError::InvalidArgument(format!("layer_norm beta: {e}"))
-    })?;
+    let data: &[T] = input
+        .buffer()
+        .typed_data()
+        .map_err(|e| KernelError::InvalidArgument(format!("layer_norm: {e}")))?;
+    let gamma_data: &[T] = gamma
+        .buffer()
+        .typed_data()
+        .map_err(|e| KernelError::InvalidArgument(format!("layer_norm gamma: {e}")))?;
+    let beta_data: &[T] = beta
+        .buffer()
+        .typed_data()
+        .map_err(|e| KernelError::InvalidArgument(format!("layer_norm beta: {e}")))?;
 
     let ndim = shape.len();
     let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
@@ -271,7 +274,10 @@ mod tests {
         let data = output.buffer().typed_data::<f32>().unwrap();
 
         for v in data {
-            assert!(v.abs() < 1e-3, "constant input should normalize to ~0, got {v}");
+            assert!(
+                v.abs() < 1e-3,
+                "constant input should normalize to ~0, got {v}"
+            );
         }
     }
 

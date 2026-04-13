@@ -70,10 +70,7 @@ fn gelu_metal_vs_cpu_agree() {
 
     assert_eq!(cpu_data.len(), gpu_data.len());
     for (i, (c, g)) in cpu_data.iter().zip(gpu_data.iter()).enumerate() {
-        assert!(
-            (c - g).abs() < 1e-5,
-            "mismatch at {i}: cpu={c}, gpu={g}"
-        );
+        assert!((c - g).abs() < 1e-5, "mismatch at {i}: cpu={c}, gpu={g}");
     }
 }
 

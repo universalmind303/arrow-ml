@@ -20,9 +20,11 @@ pub struct AmSoftmaxKernel {
 
 pub type AmSoftmaxSupportsFn = unsafe extern "C" fn(dtype: i32, device_type: i32) -> i32;
 
-pub type AmSoftmaxOpenFn =
-    unsafe extern "C" fn(dtype: i32, device_type: i32, out_handle: *mut *mut AmSoftmaxKernel)
-        -> i32;
+pub type AmSoftmaxOpenFn = unsafe extern "C" fn(
+    dtype: i32,
+    device_type: i32,
+    out_handle: *mut *mut AmSoftmaxKernel,
+) -> i32;
 
 /// Compute `output = softmax(input, axis)`.
 ///

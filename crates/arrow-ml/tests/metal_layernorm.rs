@@ -60,8 +60,7 @@ fn layernorm_scale_shift() {
 
 #[test]
 fn layernorm_2d_rows() {
-    let input =
-        make_f32(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0], vec![2, 3]).to(Device::metal(0));
+    let input = make_f32(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0], vec![2, 3]).to(Device::metal(0));
     let output = layer_norm(&input, &ones(3), &zeros(3), -1, 1e-5).unwrap();
     let data = read_f32(&output);
 
@@ -112,21 +111,15 @@ fn layernorm_metal_vs_cpu_agree() {
 
     assert_eq!(cpu_data.len(), gpu_data.len());
     for (i, (c, g)) in cpu_data.iter().zip(gpu_data.iter()).enumerate() {
-        assert!(
-            (c - g).abs() < 1e-4,
-            "mismatch at {i}: cpu={c}, gpu={g}"
-        );
+        assert!((c - g).abs() < 1e-4, "mismatch at {i}: cpu={c}, gpu={g}");
     }
 }
 
 #[test]
 fn layernorm_3d_transformer_pattern() {
     // (batch=1, seq=2, hidden=4), normalize over hidden dim
-    let input = make_f32(
-        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-        vec![1, 2, 4],
-    )
-    .to(Device::metal(0));
+    let input =
+        make_f32(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], vec![1, 2, 4]).to(Device::metal(0));
     let output = layer_norm(&input, &ones(4), &zeros(4), -1, 1e-5).unwrap();
     let data = read_f32(&output);
 

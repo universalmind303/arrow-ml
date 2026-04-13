@@ -31,8 +31,7 @@ fn make_tensor(data: Vec<f32>, shape: Vec<usize>) -> Tensor {
 
 fn run_softmax(input: &Tensor, axis: i32) -> Tensor {
     let backend = require_metal_softmax();
-    let kernel =
-        SoftmaxKernel::open(backend, dtype::FLOAT32, AmDeviceType::Metal as i32).unwrap();
+    let kernel = SoftmaxKernel::open(backend, dtype::FLOAT32, AmDeviceType::Metal as i32).unwrap();
 
     let shape = input.shape().unwrap();
     let total: usize = shape.iter().product();
@@ -85,10 +84,7 @@ fn softmax_1d_sums_to_one() {
     let data = read_f32(&output);
 
     let sum: f32 = data.iter().sum();
-    assert!(
-        (sum - 1.0).abs() < 1e-5,
-        "expected sum ~1.0, got {sum}"
-    );
+    assert!((sum - 1.0).abs() < 1e-5, "expected sum ~1.0, got {sum}");
 }
 
 #[test]
@@ -152,10 +148,7 @@ fn softmax_2d_first_axis() {
 
     for j in 0..3 {
         let col_sum = data[j] + data[3 + j];
-        assert!(
-            (col_sum - 1.0).abs() < 1e-5,
-            "column {j} sum: {col_sum}"
-        );
+        assert!((col_sum - 1.0).abs() < 1e-5, "column {j} sum: {col_sum}");
     }
 }
 
@@ -192,15 +185,11 @@ fn softmax_metal_vs_cpu_agree() {
     let gpu_data = read_f32(&gpu_output);
 
     // CPU reference
-    let cpu_out =
-        arrow_ml::activations::softmax::softmax(&input, 1).unwrap();
+    let cpu_out = arrow_ml::activations::softmax::softmax(&input, 1).unwrap();
     let cpu_data = cpu_out.buffer().typed_data::<f32>().unwrap();
 
     assert_eq!(gpu_data.len(), cpu_data.len());
     for (i, (g, c)) in gpu_data.iter().zip(cpu_data.iter()).enumerate() {
-        assert!(
-            (g - c).abs() < 1e-5,
-            "mismatch at {i}: gpu={g}, cpu={c}"
-        );
+        assert!((g - c).abs() < 1e-5, "mismatch at {i}: gpu={g}, cpu={c}");
     }
 }
